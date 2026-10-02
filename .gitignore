@@ -1,0 +1,14 @@
+﻿# Local datasets (see config/datasets.yaml) — keep empty dir skeleton in git
+data/**/*
+!data/**/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Heavy result artifacts (structure tracked via .gitkeep)
+results/raw/**/*
+!results/raw/.gitkeep

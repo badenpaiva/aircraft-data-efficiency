@@ -22,14 +22,28 @@ task:
   #   detection     -> boxes, YOLO detect, mAP metrics
   #   segmentation  -> masks, YOLO-seg / CHPDNet, mIoU metrics
   #   both_tracks   -> run both with separate metrics; combined arm is a 3rd track
-  type: TBD
+  #
+  # Detetction will be our first milestone and then we will work toward segmentation
+  type: detection
 
   # Unified class list used across ALL datasets after class_map.py remaps them.
   # Report objectives name these four; add "other" only if the audit requires it.
   classes: [dent, crack, corrosion, paint_peeling]
+  # Decision: corrosion is a STRETCH goal. The core study runs on core_classes.
+  # Corrosion needs D3 (one aircraft, see datasets.sources) and is attempted only
+  # if time allows, as a separate single-source track.
+  core_classes: [dent, crack, paint_peeling]
+  stretch_classes: [corrosion]
 
   # Classes whose recall is tracked and reported separately from overall mAP.
-  safety_critical_classes: [crack, corrosion]
+  safety_critical_classes: [crack, corrosion]   # core claim = crack recall; corrosion recall only if the stretch goal is done
+  # Coverage caveat: `corrosion` exists ONLY in the SUTD `rust` labels (D3), a
+  # supplementary source. The primary source (D1) has crack/dent/paint only.
+  # Audit: D3 has 2,039 rust boxes in 639 images (before dedup), but 72% of
+  # them are in `sceneadd*` images (contact-sheet review: they look like real
+  # photos of one parked aircraft; not exhaustive). All D3 images show ONE aircraft.
+  # TBD: how corrosion recall is evaluated (cross-domain check on D3 vs. pooling
+  # D3 into the experiment). See datasets.sources and README 3.1.
 
 # -----------------------------------------------------------------------------
 # Randomness
@@ -41,6 +55,8 @@ seeds: [0, 1, 2]            # TBD: 3-5 seeds; set by compute budget (README 8.4)
 # Fractions of the TRAINING POOL only. Val/test are fixed and never shrink.
 # Subsets are nested: the 10% subset is contained in the 25% subset, etc.
 # -----------------------------------------------------------------------------
+# Geometry-normalized pHash5 inventory: crack 2548, dent 2283, paint 294.
+# Not final admitted counts: do not estimate scarcity budgets until review gates pass.
 data_fractions: [1.0, 0.50, 0.25, 0.10, 0.05]   # TBD: confirm after dataset size is known
 
 subsampling:
@@ -49,20 +65,217 @@ subsampling:
   min_instances_per_class: 5   # if a subset would fall below this, fail loudly, don't silently pad
 
 # -----------------------------------------------------------------------------
-# Datasets (details live in config/datasets.yaml, written after the audit)
+# Datasets. Local paths / checksums live in config/datasets.yaml (written after
+# the audit); everything that affects the experiment is recorded HERE.
+#
+# Admission rules for every source:
+#   1. UN-AUGMENTED export only. Roboflow-side flips/rotations/grayscale/
+#      contrast equalization/class remapping are rejected: they confound the
+#      classical_aug arm and put augmented copies of one photo in many splits.
+#   2. Version is pinned below. Changing it needs a commit message saying why.
+#   3. Roboflow's own train/valid/test splits are IGNORED. Sources are pooled,
+#      deduped (cross-source), then re-split with `split:` below.
+#   4. D1 mixes boxes and polygons; conversion and evaluation require review.
+#   5. Synthetic images (if any source contains them) must never reach val/test.
 # -----------------------------------------------------------------------------
 datasets:
   config_file: config/datasets.yaml
-  primary: airsd            # public labeled base named in the project report
-  optional: [asd_2i]        # CHPDNet's dataset; only if obtainable
+  # Primary dataset: Innovation Hangar v2 (largest un-augmented source with
+  # crack/dent/paint). The main experiment grid runs on experiment_sources.
+  primary: innovation_hangar_v2
+  experiment_sources: [innovation_hangar_v2]
+  # Smaller sets kept for extra checks (e.g. corrosion via SUTD "rust", or
+  # cross-dataset generalization). TBD: false -> the main grid stays
+  # single-source; true -> add them to experiment_sources before dedup/splitting.
+  # D3 (sutd_aircraft_ai) is needed only for the corrosion stretch goal.
+  supplementary_sources: [ddiisc_skin_defects, sutd_aircraft_ai, xiong_zenodo_crack_dent]
+  # Never use these as a data source: Dibya (excluded)'s images are all contained in D1
+  # (audit: 1,115/1,115 phash<=5 matches), so pooling it would leak.
+  excluded_sources: [dibya_skin_defects]
+  pool_supplementary: TBD
+  # Exclude the whole image when annotated or visually discovered defects are unmapped.
+  # Retain all original records in the archive; never silently call these backgrounds.
+  unmapped_class_policy: exclude_images
+  annotation_policy:
+    detection: reviewed_polygons_to_enclosing_boxes
+    preserve_original_polygons: true
+    require_domain_and_completeness_review: true
+    unknown_review_status: quarantine
+    empty_labels: quarantine_until_verified_or_reannotated
+    segmentation_evaluation: manually_draw_or_correct_then_independent_review
+    allow_box_derived_evaluation_masks: false
+    verified_complete_mask_images: 0
+    review_ledger: docs/d1_visual_review.json
+    protocol: docs/dataset_audit.md
+  domain_policy:
+    core: real_aircraft_external_skin
+    preserved_aircraft: eligible_tagged_separate_stratum_after_review
+    wreckage_and_catastrophic_incident_damage: exclude_core
+    loose_components: require_documented_aircraft_skin_provenance
+    unknown_provenance: quarantine
+    non_aircraft: exclude
+    synthetic_composited_or_preaugmented: exclude_real_core
+    watermarked: quarantine_pending_provenance_and_confound_review
+
+  source_ids:
+    D1: innovation_hangar_v2
+    D2: ddiisc_skin_defects
+    D3: sutd_aircraft_ai
+    D4: xiong_zenodo_crack_dent
+
+  sources:
+    innovation_hangar_v2:                    # README ID: D1 (PRIMARY)
+      status: screening_complete_admission_blocked # source transformations and completeness unresolved
+      origin: roboflow
+      url: https://universe.roboflow.com/innovation-hangar/innovation-hangar-v2/dataset/2
+      version: 2                              # "2023-11-18": no preprocessing, no augmentation
+      license: CC BY 4.0
+      n_images: 4288                          # audited; roboflow split 3217/642/429 (ignored)
+      annotation: yolo_mixed_boxes_polygons
+      raw_annotation_records: {crack: 4195, dent: 3826, paint-off: 294, missing-head: 370, scratch: 83}
+      raw_polygons: {crack: 522, dent: 281}
+      polygon_only_candidate_images: 231
+      final_admitted_counts: null # not certified; use no historical planning estimates
+      normalized_records_after_phash5_dedup: {crack: 2548, dent: 2283, paint_peeling: 294} # inventory only, before admission
+      audit:
+        - "stock v2 confirmed: 4,288 images (3,217/642/429); README says no augmentation; 65 Roboflow base names occur more than once (check); 24 empty label files"
+        - "803 polygon records (522 crack, 281 dent) across 298 images; not malformed boxes; masks not certified complete"
+        - "near-duplicates: 884 images (21%) in exact-phash clusters, 1,576 (37%) at phash<=5; largest cluster 17; 141 clusters straddle Roboflow's splits"
+        - "keeping one image per phash<=5 cluster leaves 2,891 images"
+        - "0 phash<=5 matches with D2 and D3 (D4 not yet checked)"
+      class_map:                              # names confirmed from the local v2 data.yaml
+        crack: crack
+        dent: dent
+        paint-off: paint_peeling
+        missing-head: UNMAPPED
+        scratch: UNMAPPED
+      audit_of_wrong_copy:
+        - "local copy = v1-aug: 10,722 images (9,651/642/429), augmented per its README (3 outputs per source image)"
+        - "2,029 malformed label lines (not 5 values) and 56 empty label files; cause unknown, inspect on v2 (possibly polygon lines)"
+        - "its counts, dedup and planning numbers are inflated by augmentation and must NOT be used"
+        - "157 phash<=5 clusters span Roboflow's train/valid/test"
+      known_issues:
+        - "contains all 1,115 Dibya (excluded) images; Dibya (excluded) is excluded for this reason"
+        - "second-pass check by Roboflow source names: the local v1-aug copy has 4,161 distinct source names vs the page's 4,288 images; verify the v2 count after re-download"
+        - "47 images of the local D1 copy are byte-identical to Dibya (excluded) files (different .rf. suffixes); a byte-level check understates the overlap, since the perceptual check shows ALL of Dibya (excluded) is in D1"
+        - "filenames such as 143_1, 143_10, 143_12 suggest several shots per object, so expect many near-duplicates; dedup and grouped splitting are essential"
+        - "no corrosion class (see safety_critical_classes note)"
+        - "appears to be the second public dataset used in report ref [12]; confirm in that paper"
+        - "all 4288 local images are 640x640; visible source transformations contradict a clean stock-content assumption; see docs/dataset_audit.md"
+      rejected_versions:
+        - version: 1
+          url: https://universe.roboflow.com/innovation-hangar/innovation-hangar-v2/dataset/1
+          reason: >-
+            "Aug" export of 10,722 images: the training split is 3x-augmented
+            (9,651 = 3 x 3,217; flips, +/-15 deg rotation, saturation/
+            brightness/exposure jitter) and resized to 640x640 by stretching.
+            Its valid/test counts (642/429) equal v2's. Violates admission
+            rules 1 and 2. The local copy has since been replaced with v2.
+
+    ddiisc_skin_defects:                     # README ID: D2
+      status: audited
+      origin: roboflow
+      url: https://universe.roboflow.com/ddiisc/aircraft_skin_defects/dataset/1
+      version: 1                              # stock export, no augmentation
+      license: CC BY 4.0
+      n_images: 372                           # audited; roboflow split 298/37/37 (ignored)
+      annotation: yolo_boxes
+      raw_boxes: {crack: 209, dent: 977, missing-head: 3214, paint-peel-off: 888, scratch: 385}
+      class_map:
+        crack: crack
+        dent: dent
+        paint-peel-off: paint_peeling
+        missing-head: UNMAPPED
+        scratch: UNMAPPED
+      audit:
+        - "un-augmented; 8 empty label files; 2 images in phash<=5 clusters (one pair), none straddling splits"
+        - "0 phash<=5 matches with Dibya (excluded), D3 and D1 (D4 not yet checked)"
+      known_issues:
+        - "box counts dominated by missing-head; crack is rare (209 boxes)"
+      rejected_versions:
+        - version: 23
+          url: https://universe.roboflow.com/ddiisc/aircraft_skin_defects/dataset/23
+          reason: >-
+            Derived export: 3x augmentation (flip, +/-45 deg rotation, blur,
+            brightness), grayscale on 100% of images, adaptive contrast
+            equalization, and "5 remapped" classes (preview thumbnails show a
+            single "defect" label). Violates admission rules 1 and 2.
+            TBD: confirm with the team that v1, not v23, is what was downloaded.
+            (The audit confirmed the local copy is stock v1.) The v23 export
+            has already been removed from data/raw. A Roboflow-name check found
+            all 314 of its source names in the v1 stock export (372), so it is
+            a derived copy of the same photos.
+
+    sutd_aircraft_ai:                        # README ID: D3 (the dataset of report ref [12])
+      status: audited
+      origin: roboflow
+      url: https://universe.roboflow.com/sutd-4mhea/aircraft-ai-dataset/dataset/4
+      version: 4                              # "983 images 70-20-10 ratio without augmentation"
+      license: CC BY 4.0
+      n_images: 983                           # audited; roboflow split 688/197/98 (ignored)
+      annotation: yolo_boxes
+      raw_boxes: {rust: 2039, scractch: 2068, missing-rivet: 1408}   # rust is in 639 images
+      class_map:                              # names confirmed from data.yaml
+        rust: corrosion
+        scractch: UNMAPPED                    # sic: this is the spelling in data.yaml
+        missing-rivet: UNMAPPED
+      filename_groups:                        # from the audit
+        sceneadd: {images: 595, rust_boxes: 1476}
+        scene: {images: 127, rust_boxes: 103}
+        image-: {images: 261, rust_boxes: 460}
+      audit:
+        - "un-augmented per its README; 5 minor repeated base-name groups"
+        - "heavy near-duplicates: 230 images (23%) in phash<=5 clusters, 459 (47%) at phash<=8; 46 clusters straddle Roboflow's splits"
+        - "rust box area is small: median 1.1% of image area (p5 0.10%, p95 8.3%)"
+      known_issues:
+        - "only source with a corrosion-like class (rust); no crack/dent/paint labels"
+        - "real_only: likely true. Contact sheets (25 random images per filename group) show real photographs of one parked Boeing 747 (registration HS-UTB visible) in all three groups, with no visible compositing; this is a thumbnail-level review, not proof. The 72% of rust boxes in `sceneadd*` images are therefore probably real."
+        - "single aircraft, single location (a preserved/parked airframe): the `rust` labels look like weathering streaks and rust spots, so they may not represent structural corrosion on in-service aircraft; this limits generalization"
+        - "many frames repeat the same view (e.g. nose-on shots, the same door/window areas), consistent with the 47% near-duplicate rate"
+        - "images were stretched to 640x640 by Roboflow (aspect ratio not preserved)"
+
+    xiong_zenodo_crack_dent:                 # README ID: D4
+      status: partly_audited
+      origin: zenodo
+      url: https://zenodo.org/records/16792216
+      doi: 10.5281/zenodo.16792216            # record title: "airscraft-skin-crack-dent" (sic)
+      version: v1                             # published 2025-08-11
+      license: CC BY 4.0
+      archive: {name: airscraft-skin-crack-dent.7z, size_mb: 556.1, md5: 978a823ad82a40a131c9f212214ef13a}
+      companion_paper: {doi: 10.3390/drones9090594, note: "Xiong et al., Drones 9(9), 594, 2025 (INN-YOLO)"}
+      n_images: 1559                          # audited; matches the paper's self-collected count. Provided split 1338/192/29 (ignored)
+      annotation: yolo_boxes                  # label files parsed as YOLO txt by the audit, 1559 labels, no label issues
+      raw_boxes: TBD                          # per-class counts missing from the first audit run
+      source_label_names: [crack, dent]        # numeric 0,1; visually inferred from local labels
+      class_order_evidence: visual_overlay_review_2026_10_03
+      class_order_note: "Paper confirms class names but not numeric IDs; 8 distinct filename families per ID visually support 0=crack, 1=dent. See docs/d4_verification.md."
+      augmentation_status: paper_reports_247_originals_expanded_to_1559
+      class_map:
+        crack: crack
+        dent: dent
+      audit:
+        - "near-duplicates: 900 images (58%) in exact-phash clusters, 1,235 (79%) at phash<=5; 177 clusters straddle the provided splits; 2 md5-duplicate groups"
+        - "provided test split is only 29 images"
+        - "2 exact byte-duplicate pairs: valid/67_2.png = train/67_4.png (straddles train/valid) and train/272_3.png = train/272_4.png; drop the redundant copies"
+        - "overlap with D1 not yet checked (D4 was missing from the cross-dataset matrix)"
+      known_issues:
+        - "effective number of unique images is far below 1,559; grouped splitting is mandatory"
+        - "the audit's 'un-augmented' verdict for D4 is weak (it only recognizes Roboflow filenames); the 79% near-duplicate rate is consistent with augmented or video-frame data"
+        - "whether this is exactly the paper's self-collected set, and whether its count includes augmentation, is unverified"
+      # Not acquired (the companion paper points to them, but they were not downloaded):
+      #   Roboflow youssef-donia/aircraft-damage-detection-2 and -1j9qk, ke-project/yolo-tb1l6
+
 
 split:
-  # Applied AFTER dedup, grouped so near-duplicates never straddle splits.
+  # Applied to the POOLED sources AFTER dedup, grouped so near-duplicates never
+  # straddle splits. Roboflow's original splits are discarded.
   train_pool: 0.70
   val: 0.10
   test: 0.20
   split_seed: 1234          # fixed; the test set must be identical across all runs
+  stratify_by_source: true  # every split keeps each source's share (sources differ in domain)
 
+# Runs on the POOLED set so cross-source duplicates are caught too.
 dedup:
   method: phash
   hamming_threshold: 5
@@ -105,6 +318,10 @@ detectors:
 # Shared training settings so detectors differ ONLY in architecture.
 training:
   image_size: 640
+  resize_policy: aspect_preserving_letterbox
+  image_interpolation: bilinear
+  mask_interpolation: nearest
+  low_visibility_policy: review_or_quarantine
   epochs: TBD               # fixed budget across detectors, or early stopping w/ same patience
   batch_size: TBD
   pretrained_init: coco     # [15] found init matters little; fix it so it is not a confound

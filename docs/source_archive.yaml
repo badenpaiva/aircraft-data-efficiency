@@ -1,0 +1,46 @@
+# Historical excluded and unavailable sources; not part of the four active datasets.
+excluded_sources:
+  dibya_skin_defects:                      # excluded historical source, no active ID
+    status: EXCLUDED_contained_in_D1
+    origin: roboflow
+    url: https://universe.roboflow.com/dibya-dillip/aircraft-skin-defects-new-dataset/dataset/1
+    version: 1                              # "size 640 stock", no augmentation
+    license: CC BY 4.0
+    n_images: 1115                          # audited; roboflow split 962/102/51 (ignored)
+    annotation: yolo_boxes
+    raw_boxes: {crack: 398, dent: 517, missing-head: 370, paint-off: 294, scratch: 83}
+    class_map:
+      crack: crack
+      dent: dent
+      paint-off: paint_peeling
+      missing-head: UNMAPPED
+      scratch: UNMAPPED
+    audit:
+      - "un-augmented (README states none; no duplicate .rf. base names); 11 empty label files"
+      - "14 images in phash<=5 near-duplicate clusters; 3 clusters straddle Roboflow's splits"
+      - "100% of its images (1,115/1,115) have a phash<=5 match in D1, with the same IMG_2023... base filenames: Dibya (excluded) is contained in D1"
+    known_issues:
+      - "later Roboflow versions (v2-v4) are augmented/grayscale; do NOT use them"
+
+future_sources:
+  airsd:                                   # README ID: [3] (J-DDL)
+    status: pending
+    origin: google_drive                    # link in the paper has expired; authors to be emailed
+    paper: arXiv:2506.10505
+    n_images: 8091                          # per the paper
+    annotation: [yolo_boxes, coco_boxes]
+    license: TBD
+    class_map:                              # names per the paper, unverified
+      crack: crack
+      dent: dent
+      rust: corrosion
+      paint peeling: paint_peeling
+      # scratch, rivet damage, lightning strike, bird strike, hail damage,
+      # wrinkle, missing fastener -> UNMAPPED
+    known_issues:
+      - "mixes synthetic and real images; only its test split is stated to be all real. Need a per-image real/synthetic flag from the authors, else use only its real test split for evaluation"
+      - "fighter-aircraft imagery (domain caveat for the MRO framing)"
+
+  asd_2i:                                  # CHPDNet's dataset
+    status: pending
+    optional: true                          # only if obtainable

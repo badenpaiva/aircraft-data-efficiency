@@ -1,0 +1,177 @@
+# =============================================================================
+# experiment.yaml: single source of truth for every experiment run.
+#
+# Rules:
+#   - No script may hard-code a value that lives here. Scripts read this file.
+#   - Fields marked  TBD  depend on the open decisions in README.md Section 8
+#     and MUST be resolved (and this comment removed) before the stage that
+#     uses them is run. Loaders should raise an error if they encounter "TBD".
+#   - Change a value here, never in code, and commit the change with a message
+#     saying why.
+# =============================================================================
+
+project:
+  name: aircraft-data-efficiency
+  version: 0.1.0
+
+# -----------------------------------------------------------------------------
+# Task definition. Depends on the dataset audit (README 8.1 and 8.2).
+# -----------------------------------------------------------------------------
+task:
+  # One of: detection | segmentation | both_tracks
+  #   detection     -> boxes, YOLO detect, mAP metrics
+  #   segmentation  -> masks, YOLO-seg / CHPDNet, mIoU metrics
+  #   both_tracks   -> run both with separate metrics; combined arm is a 3rd track
+  type: TBD
+
+  # Unified class list used across ALL datasets after class_map.py remaps them.
+  # Report objectives name these four; add "other" only if the audit requires it.
+  classes: [dent, crack, corrosion, paint_peeling]
+
+  # Classes whose recall is tracked and reported separately from overall mAP.
+  safety_critical_classes: [crack, corrosion]
+
+# -----------------------------------------------------------------------------
+# Randomness
+# -----------------------------------------------------------------------------
+seeds: [0, 1, 2]            # TBD: 3-5 seeds; set by compute budget (README 8.4)
+
+# -----------------------------------------------------------------------------
+# Data scarcity axis (RQ1)
+# Fractions of the TRAINING POOL only. Val/test are fixed and never shrink.
+# Subsets are nested: the 10% subset is contained in the 25% subset, etc.
+# -----------------------------------------------------------------------------
+data_fractions: [1.0, 0.50, 0.25, 0.10, 0.05]   # TBD: confirm after dataset size is known
+
+subsampling:
+  stratify_by: class        # keep class balance (esp. crack/corrosion) in every subset
+  nested: true
+  min_instances_per_class: 5   # if a subset would fall below this, fail loudly, don't silently pad
+
+# -----------------------------------------------------------------------------
+# Datasets (details live in config/datasets.yaml, written after the audit)
+# -----------------------------------------------------------------------------
+datasets:
+  config_file: config/datasets.yaml
+  primary: airsd            # public labeled base named in the project report
+  optional: [asd_2i]        # CHPDNet's dataset; only if obtainable
+
+split:
+  # Applied AFTER dedup, grouped so near-duplicates never straddle splits.
+  train_pool: 0.70
+  val: 0.10
+  test: 0.20
+  split_seed: 1234          # fixed; the test set must be identical across all runs
+
+dedup:
+  method: phash
+  hamming_threshold: 5
+  threshold_sensitivity_sweep: [3, 5, 8]
+
+# -----------------------------------------------------------------------------
+# Experiment arms (the data-efficiency techniques being compared)
+# -----------------------------------------------------------------------------
+arms:
+  baseline:
+    description: "Train on the real subset only."
+  classical_aug:
+    description: "Flip/rotate/noise control. Replicates the 'overuse hurts' finding of [7]."
+    # Test at least two strengths so the overuse effect is visible.
+    strengths: [light, heavy]
+  hqgan_aug:
+    description: "Real subset + HQGAN-synthesized defects blended into real backgrounds."
+    synth_to_real_ratios: [0.5, 1.0, 2.0]   # TBD: sweep; [7] suggests more is not always better
+    gan_train_on: current_training_subset_only   # leakage rule; do not change
+    cache_dir: results/cache/gan
+  fewshot:
+    description: "CHPDNet-style CLIP-guided few-shot segmentation."
+    k_shots: [1, 5]          # TBD: depends on task.type
+    n_episodes: 100          # TBD: episodes per seed for query evaluation
+    clip_model: TBD          # record the exact checkpoint used
+  hqgan_aug+fewshot:
+    description: "Few-shot support set augmented with GAN-synthesized examples."
+
+# Which arms run at which task type is resolved by task.type above.
+
+# -----------------------------------------------------------------------------
+# Architecture axis (RQ2). Per-detector settings live in config/detectors/*.yaml
+# -----------------------------------------------------------------------------
+detectors:
+  - {name: yolox,   config: config/detectors/yolox.yaml,   role: reproduction_anchor}
+  - {name: yolov8,  config: config/detectors/yolov8.yaml,  role: comparison}
+  - {name: yolo11,  config: config/detectors/yolo11.yaml,  role: comparison}
+  - {name: yolo26,  config: config/detectors/yolo26.yaml,  role: comparison}
+
+# Shared training settings so detectors differ ONLY in architecture.
+training:
+  image_size: 640
+  epochs: TBD               # fixed budget across detectors, or early stopping w/ same patience
+  batch_size: TBD
+  pretrained_init: coco     # [15] found init matters little; fix it so it is not a confound
+  device: cuda
+
+# -----------------------------------------------------------------------------
+# Metrics
+# -----------------------------------------------------------------------------
+metrics:
+  primary_detection: map50
+  detection: [map50, map50_95, per_class_ap]
+  segmentation: [miou, per_class_iou]
+  safety_recall:
+    classes: [crack, corrosion]
+    iou_threshold: 0.5
+    confidence_threshold: TBD   # fixed operating point so recall is comparable across arms
+    also_report_precision_at_that_point: true
+  cost: [train_time_sec, inference_ms_per_image, n_parameters]
+
+# -----------------------------------------------------------------------------
+# Reproduction gate (stopping rule)
+# New-detector results are NOT trusted until the YOLOX baseline is roughly
+# reproduced. Reference values come from [7]: 78.55 mAP with HQGAN, a gain
+# of 5.27 pp, so ~73.28 without. Note [7] used its own dataset (686 images),
+# so exact agreement is not expected on AIRSD; treat this as a sanity check on
+# the gain direction and rough magnitude, and document any gap.
+# -----------------------------------------------------------------------------
+reproduction_gate:
+  enabled: true
+  reference:
+    yolox_baseline_map: 73.28     # derived: 78.55 - 5.27
+    yolox_hqgan_map: 78.55
+    hqgan_gain_pp: 5.27
+  tolerance_pp: 3.0               # TBD: agree with advisor
+  require_gain_sign_match: true   # HQGAN must help YOLOX at full data, or stop and investigate
+
+# -----------------------------------------------------------------------------
+# Statistics
+# -----------------------------------------------------------------------------
+statistics:
+  paired_tests: [paired_t, wilcoxon]
+  shared_seed_indices: true         # same seeds/subsets across arms -> valid pairing
+  multiple_comparison_correction: holm_bonferroni
+  alpha: 0.05
+  bootstrap:
+    n_resamples: 2000
+    ci_level: 0.95
+  effect_sizes: [cohens_d, rank_biserial]
+
+# -----------------------------------------------------------------------------
+# Paths
+# -----------------------------------------------------------------------------
+paths:
+  data_raw: data/raw
+  data_interim: data/interim
+  data_processed: data/processed
+  results_raw: results/raw
+  results_aggregated: results/aggregated
+  results_tables: results/tables
+  results_figures: results/figures
+  gan_cache: results/cache/gan
+  manifest: results/raw/run_manifest.json   # records versions, hashes, dates per run
+
+# -----------------------------------------------------------------------------
+# Compute
+# -----------------------------------------------------------------------------
+compute:
+  preferred: "Colab / Kaggle GPU"      # TBD: confirm what the team actually has
+  num_workers: 4
+  deterministic: true                  # set cudnn.deterministic and seed all RNGs

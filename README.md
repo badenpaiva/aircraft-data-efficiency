@@ -321,6 +321,17 @@ config/*.yaml -> scripts/0x_*.py -> results/raw/*.csv
 
 ## 7. Current usage
 
+Run training, validation evaluation and prediction previews with one command:
+
+```cmd
+.venv\Scripts\python.exe scripts\run_detection_pipeline.py
+```
+
+Each run gets a unique output name under `results/detection/`. The runner prints
+the weights, metrics and prediction paths when finished, and stops if a stage
+fails. Add `--smoke` for a quick pipeline check or `--dry-run` to print commands.
+The prepared dataset must already exist. Individual commands follow.
+
 Run from the repository root. Create a virtual environment first with
 `python -m venv .venv` if one does not exist.
 

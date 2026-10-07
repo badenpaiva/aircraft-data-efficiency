@@ -55,6 +55,22 @@ not manually certified independent-example counts.
 
 ## Check and train
 
+To run all three stages in order (training, validation evaluation, predictions):
+
+```powershell
+.\.venv\Scripts\python.exe scripts/run_detection_pipeline.py
+```
+
+The runner reuses the prepared dataset, assigns a unique UTC run name, uses the
+newly trained `best.pt` for both later stages, and stops on any failure. Results
+are saved in `<name>`, `<name>_evaluation` and `<name>_predictions` under the
+configured output project. Existing directories are never overwritten. Use
+`--name my_run` for a custom prefix, `--device cpu` or `--device 0` to select the
+device, `--limit 6` for six preview images, and `--epochs` / `--batch` to override
+full-training settings. `--smoke` runs the small train/evaluation check;
+`--dry-run` prints the sequence without executing it. It does not run the
+reserved test evaluation or regenerate the dataset.
+
 ```powershell
 # Validate the dataset and print the plan (no training).
 .\.venv\Scripts\python.exe scripts/train_detector.py --dry-run

@@ -1,5 +1,13 @@
 # D1 annotation and admission review — 2026-10-03
 
+**Development exception (2026-10-06):** the user temporarily disabled mandatory
+manual approval to begin the detection pipeline. The preparation script may
+export geometrically valid, nonempty unreviewed candidates as `provisional`,
+including provisional validation/test splits. The findings and final-study
+review standards below still apply; this exception does not certify the labels
+or provenance. Restore the config review flag and rebuild a reviewed version
+before claiming reviewed-data results. See `docs/detection_pipeline.md`.
+
 ## Evidence and reproducibility
 
 Run `python tools/review_d1.py`. Generated evidence is in `audit_out/d1_review/`: `inventory.json`, `manifest.jsonl`, `review_index.json`, eight polygon overlay sheets, four empty-label sheets, six domain sheets and eight resolution comparisons. Left/right pairs show unobscured imagery and overlays; red = crack, cyan = dent, green = paint-off, orange = missing-head, magenta = scratch. Each sample has an ID mapped to its complete relative filename and source line in the manifest. The tracked `docs/d1_visual_review.json` records visual decisions and label hashes; rerunning the generator does not overwrite these decisions.

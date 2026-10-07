@@ -13,12 +13,24 @@ Advisor: Dr. Mustafa Hammad
 | Sanjana Sara Siju | g00101441 |
 | Sidhanth Menon | b00098743 |
 
-> **Project status: scaffolding only.** The directory skeleton exists; no
-> experiment code has been written and **no results exist yet**. Public
-> datasets have been collected (see [Section 3.1](#31-data-sources)) and
-> partly audited (see Section 3.1). Every command in the "Usage" section is marked
-> *planned*. This README will be updated file by file as each module lands
-> (see [Status](#status)).
+> **Current milestone: D1-only provisional detection baseline.** Dataset
+> preparation, training, evaluation and prediction scripts are implemented.
+> Manual approval is temporarily optional; automatic exclusions and grouped
+> splits remain enabled. These development data and scores are not certified
+> research results. Follow [the detection quickstart](docs/detection_pipeline.md)
+> for working commands. The full research grid and numbered scripts described
+> below remain planned.
+
+**Verified on 2026-10-07:** 13 automated tests passed, followed by a successful
+CPU smoke run through training, evaluation and prediction. The smoke run used
+nine training and nine validation images for one epoch at 128px; full baseline
+training and test-set evaluation have not run.
+
+**Ultralytics** is the Python library providing the YOLO implementation used
+by our scripts. **YOLOv8n** is the small detector model, and **PyTorch** performs
+its neural-network computations. We use the library locally to load pretrained
+weights, train, evaluate and produce predictions; our project code handles the
+dataset, experiment configuration and reporting.
 
 ---
 
@@ -52,7 +64,8 @@ It is not a proposal for a new detector or a new generative model.
 
 ## 3. Experimental design
 
-Every result is one cell of this grid:
+The planned research grid is below. The implemented development pipeline runs
+one YOLOv8n baseline; it does not yet run this grid:
 
 | Axis | Levels |
 |---|---|
@@ -61,7 +74,8 @@ Every result is one cell of this grid:
 | **Detector / backbone** | YOLOX (reproduction anchor), YOLOv8, YOLO11, YOLO26 |
 | **Seed** | 3-5 seeds per cell |
 
-Design rules (non-negotiable, enforced by tests where possible):
+Final-study design rules (the provisional pilot does not certify real-only
+imagery or annotation completeness):
 
 - **Fixed val/test sets.** Only the training pool shrinks. Test images never change.
 - **Nested subsets.** The 10% subset is contained in the 25% subset, and so on.
@@ -87,18 +101,31 @@ maps, known issues) are recorded in `config/experiment.yaml` under
 
 | ID | Source (version used) | Images | Raw classes | License | Status |
 |---|---|---|---|---|---|
-| **D1** | **Innovation Hangar, Roboflow `innovation-hangar-v2` (v2, stock): PRIMARY**. Appears to be the second public set used in [12] (to confirm) | 4,288 | crack, dent, missing-head, paint-off, scratch | CC BY 4.0 | screened; admission blocked (see D1 review) |
+| **D1** | **Innovation Hangar, Roboflow `innovation-hangar-v2` (v2, stock): PRIMARY**. Appears to be the second public set used in [12] (to confirm) | 4,288 | crack, dent, missing-head, paint-off, scratch | CC BY 4.0 | provisional detection export available; manual certification incomplete |
 | D2 | DDIISc, Roboflow `aircraft_skin_defects` (v1, stock) | 372 | crack, dent, missing-head, paint-peel-off, scratch | CC BY 4.0 | audited |
 | D3 | SUTD, Roboflow `aircraft-ai-dataset` (v4, no augmentation); the dataset of report ref [12] | 983 | rust, scractch (sic), missing-rivet | CC BY 4.0 | audited |
 | D4 | Xiong, Zenodo `airscraft-skin-crack-dent` (sic), v1, DOI 10.5281/zenodo.16792216; companion to the INN-YOLO paper | 1,559 | crack, dent (paper names; numeric order visually checked) | CC BY 4.0 | partly audited |
 
-**Which sources feed the experiments.** The main grid runs on D1 alone. D2-D4
-are supplementary; whether they are pooled into the main grid
-(`datasets.pool_supplementary`) is undecided (TBD). **Dibya is excluded** because
+**Which sources feed the experiments.** D1 alone is selected, with
+`datasets.pool_supplementary: false`. D2-D4 are retained as supplementary
+source metadata and are not included in preparation or training. **Dibya is excluded** because
 all of its images are contained in D1. Excluded and unavailable source details
 are kept in `docs/source_archive.yaml`; they have no active dataset IDs.
 
-**Admission rules.**
+**Current export:** `data/processed/d1_provisional_v1/dataset/` contains
+2,787 training, 398 validation and 803 test images. Preparation excluded 276
+images with unmapped classes and quarantined 24 empty-label images. The 3,988
+exported images belong to 1,022 conservative related-image groups, each confined
+to one split. These are provisional counts, not certified independent examples.
+
+Manual approval is temporarily optional through
+`datasets.annotation_policy.require_domain_and_completeness_review: false`.
+Automatic geometry checks, exclusions and recorded quarantines remain enforced.
+Restore the flag to `true`, complete review and export a new dataset version
+to reinstate mandatory approval. The older visual-review ledger is absent from
+this checkout, so its prior image-level decisions were not carried forward.
+
+**Admission rules for the reviewed research dataset.**
 
 - **Un-augmented exports only.** Roboflow-side flips, rotations, grayscale,
   contrast equalization and class remapping are rejected, because they
@@ -131,12 +158,13 @@ Unmapped defects now **exclude the entire image** from the core study. They
 are not relabeled as healthy background. All 32 D1/D2 empty-label images
 remain quarantined: 14 show missing annotations, 18 are ambiguous, and none
 is certified background. Policies and filename-level findings are in
-[the D1 review](docs/dataset_audit.md) and [review ledger](docs/d1_visual_review.json).
+[the D1 review](docs/dataset_audit.md). The historical review ledger must be
+recovered or replaced by fresh review decisions before those decisions can be used.
 
 **Audit results** (`tools/audit_datasets.py`; D1 is now stock v2, replacing the
 wrong v1-aug copy used in the first run).
 
-- **D1 v2 metadata is confirmed, but admission is blocked.** Its 803 apparent
+- **D1 v2 metadata is confirmed; reviewed admission remains incomplete.** Its 803 apparent
   malformed rows are polygons (522 crack, 281 dent), generally following
   damage in reviewed overlays but not certified complete masks. Normalized
   pre-dedup records: crack 4,195, dent 3,826, paint-off 294. The same pHash<=5
@@ -222,18 +250,25 @@ wrong v1-aug copy used in the first run).
 
 ## 6. Repository layout
 
-`[ ]` = not started, `[x]` = implemented and tested. Everything is `[ ]` today.
+`[ ]` = planned, `[x]` = implemented. The shared detection module currently
+provides baseline configuration, validation and metrics; the finer-grained
+research modules below remain planned.
 
 ```
 aircraft-data-efficiency/
 ├── README.md                          [x] this file
-├── requirements.txt                   [ ]
+├── requirements.txt                   [x] preparation and detection dependencies
+├── tools/
+│   ├── prepare_detection.py           [x] selected sources, labels, grouped export
+│   ├── review_d1.py                   [x] annotation review helpers
+│   └── audit_datasets.py              [x] dataset audit
 ├── config/
 │   ├── experiment.yaml                [x] fractions, arms, detectors, seeds, thresholds
 │   ├── datasets.yaml                  [ ] paths, class maps, licenses
 │   └── detectors/                     [ ] one yaml per detector generation
 ├── data/                              gitignored: raw/ interim/ processed/ (raw/ has one subfolder per source ID)
 ├── src/
+│   ├── detection_pipeline.py          [x] baseline config, integrity and metrics
 │   ├── datasets/
 │   │   ├── airsd.py                   [ ] loader
 │   │   ├── class_map.py               [ ] unify labels -> dent/crack/corrosion/paint_peeling
@@ -259,6 +294,9 @@ aircraft-data-efficiency/
 │   ├── statistics.py                  [ ]
 │   └── visualization.py               [ ]
 ├── scripts/
+│   ├── train_detector.py              [x] baseline training and smoke mode
+│   ├── evaluate_detector.py           [x] AP and fixed-threshold precision/recall
+│   ├── predict_samples.py             [x] validation prediction previews
 │   ├── 01_prepare_data.py             [ ]
 │   ├── 02_train_gan.py                [ ]
 │   ├── 03_run_detection_grid.py       [ ]
@@ -268,13 +306,12 @@ aircraft-data-efficiency/
 │   ├── 07_make_figures_tables.py      [ ]
 │   └── smoke_test.py                  [ ]
 ├── notebooks/                         [ ] Colab/Kaggle launchers
-├── tests/                             [ ]
-├── results/                           raw/ aggregated/ tables/ figures/  (empty)
-└── docs/                              [ ] protocol, dataset audit, deviations log
+├── tests/                             [x] 13 preparation and pipeline tests
+├── results/                           detection/ contains local smoke outputs
+└── docs/                              [x] audits, preparation and pipeline guide
 ```
 
-**Data flow** (every number in the report must come from this chain, with no
-hand-typed values):
+**Planned research reporting flow** (not yet implemented):
 
 ```
 config/*.yaml -> scripts/0x_*.py -> results/raw/*.csv
@@ -282,44 +319,56 @@ config/*.yaml -> scripts/0x_*.py -> results/raw/*.csv
               -> 07_make_figures_tables.py -> results/{tables,figures}/
 ```
 
-## 7. Usage (*planned, none of this works yet*)
+## 7. Current usage
 
-```bash
-# 0. environment (GPU required for GAN / YOLO / CLIP stages)
-pip install -r requirements.txt
+Run from the repository root. Create a virtual environment first with
+`python -m venv .venv` if one does not exist.
 
-# 1. prepare data: dedup, class map, fixed splits, nested subsets
-python scripts/01_prepare_data.py --config config/experiment.yaml
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# 2. train one GAN per (fraction, seed); cached
-python scripts/02_train_gan.py --config config/experiment.yaml
+# Run only if this export does not already exist; use new paths for new versions.
+.\.venv\Scripts\python.exe tools/prepare_detection.py --output data/processed/d1_provisional_v1 --export
 
-# 3-5. run the experiment arms
-python scripts/03_run_detection_grid.py --config config/experiment.yaml
-python scripts/04_run_fewshot_grid.py   --config config/experiment.yaml
-python scripts/05_run_combined.py       --config config/experiment.yaml
+# Validate data and inspect the plan without training.
+.\.venv\Scripts\python.exe scripts/train_detector.py --dry-run
 
-# 6-7. aggregate, test, and produce tables/figures
-python scripts/06_aggregate_and_stats.py
-python scripts/07_make_figures_tables.py
+# Run a small pipeline check; choose a fresh name for each run.
+.\.venv\Scripts\python.exe scripts/train_detector.py --smoke --name d1_smoke_new
 
-# sanity check of the pipeline mechanics on tiny fake data (no GPU)
-python scripts/smoke_test.py
+# Full development baseline: up to 30 epochs, 640px, batch 8.
+.\.venv\Scripts\python.exe scripts/train_detector.py
+
+# After the full baseline completes:
+.\.venv\Scripts\python.exe scripts/evaluate_detector.py --weights results/detection/d1_baseline/weights/best.pt
+.\.venv\Scripts\python.exe scripts/predict_samples.py --weights results/detection/d1_baseline/weights/best.pt
+
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
+
+The scripts select CUDA when available and otherwise CPU. The verified local
+environment currently uses CPU; full training will be slower than the smoke
+run. Stochastic training augmentation is disabled for the baseline. Evaluation
+defaults to validation; the reserved test split requires explicit `--split test`.
+Outputs include weights, curves, metrics and run metadata under
+`results/detection/`. See [the pipeline guide](docs/detection_pipeline.md) for
+the verified smoke-run paths and GPU/environment details. Data, checkpoints,
+local caches and generated results are gitignored; a Git checkout alone does
+not contain the datasets or trained weights.
 
 ## 8. Open decisions
 
 These must be resolved and recorded in `docs/` before the matching code is
 written.
 
-1. **Shared task.** HQGAN is evidenced for *detection* (boxes, YOLO); CHPDNet
+1. **Later combined task.** Detection is the first milestone. HQGAN is evidenced for *detection* (boxes, YOLO); CHPDNet
    for *segmentation* (masks, mIoU). Combining them requires choosing one of:
    evaluate everything as detection; evaluate everything as segmentation
    (YOLO-seg); or keep two tracks with a combined third arm. This depends on
    what AIRSD annotations actually contain.
 2. **Dataset audit.** Two runs done (Section 3.1). Still to do: finish D1 provenance,
    completeness and mask certification (see docs/dataset_audit.md), resolve D4's augmented-source admission and review cross-source similarity groups, confirm D3's real-vs-synthetic
-   status beyond the visual contact-sheet review (looks real), decide whether supplementary sets are pooled,
+   status beyond the visual contact-sheet review (looks real) if that stretch track is attempted,
    and run the real-vs-synthetic checks. AIRSD (and ASD-2^i if obtainable) is still
    pending; write to the J-DDL authors for a working link and a per-image
    real/synthetic flag. Record the outcome in `docs/dataset_audit.md`.

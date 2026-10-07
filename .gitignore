@@ -12,3 +12,9 @@ venv/
 # Heavy result artifacts (structure tracked via .gitkeep)
 results/raw/**/*
 !results/raw/.gitkeep
+
+# Local detector outputs, downloaded checkpoints and library settings
+results/detection/
+.ultralytics/
+Ultralytics/
+*.pt

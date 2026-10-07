@@ -1,4 +1,4 @@
-"""Prepare D1/D2/D4 detection candidates and export reviewed images.
+"""Prepare configured detection sources and export reviewed or provisional images.
 Raw files are read-only. See docs/prepare_detection.md for the two-stage workflow.
 """
 from __future__ import annotations
@@ -109,7 +109,7 @@ def annotation_signature(r):
     return sorted((str(a['target_class'])+':'+a['source_class'], tuple(round(x,10) for x in a['box'])) for a in r['annotations'])
 
 
-def assign_status(r, review):
+def assign_status(r, review, require_review=True):
     issues = r['issues']
     if any(x.startswith('unmapped_class:') for x in issues): return 'excluded_unmapped'
     if review and (review.get('image_sha256') != r['image_sha256'] or review.get('label_sha256') != (r['label_sha256'] or '') or review.get('schema_sha256') != r['schema_sha256']):
@@ -124,7 +124,7 @@ def assign_status(r, review):
     if review and review.get('action') in {'repair','quarantine'}: return 'quarantine_review'
     if r.get('prior_review_note'): return 'quarantine_prior_review'
     if not r['annotations']: return 'quarantine_empty'
-    return 'pending_review'
+    return 'pending_review' if require_review else 'provisional'
 
 
 def write_json(path, data):
@@ -133,13 +133,27 @@ def write_json(path, data):
 
 def scan(root, config, output, reviews=None, d4_order=None, overrides=None):
     target_names = config['task']['core_classes']
+    datasets = config['datasets']
+    require_review = datasets['annotation_policy'].get('require_domain_and_completeness_review', True)
+    if not isinstance(require_review, bool):
+        raise ValueError('require_domain_and_completeness_review must be true or false')
+    selected = datasets.get('experiment_sources')
+    if not isinstance(selected, list) or not selected or len(set(selected)) != len(selected):
+        raise ValueError('experiment_sources must be a nonempty list of unique source names')
+    supported = {datasets['source_ids'][did]: did for did in HINTS}
+    if any(name not in supported for name in selected):
+        raise ValueError('experiment_sources contains an unsupported detection source')
+    if datasets.get('pool_supplementary') is not True and len(selected) > 1:
+        raise ValueError('Multiple experiment_sources require pool_supplementary: true')
+    source_ids = [supported[name] for name in selected]
     if config['datasets']['unmapped_class_policy'] != 'exclude_images':
         raise ValueError('This cleaner implements exclude_images only')
     prior_path = root / config['datasets']['annotation_policy']['review_ledger']
     prior = {r['image']: r for r in json.loads(prior_path.read_text())} if prior_path.exists() else {}
     decisions = read_reviews(reviews)
     records, orphan_labels = [], []
-    for did, hint in HINTS.items():
+    for did in source_ids:
+        hint = HINTS[did]
         matches = sorted(p for p in (root/'data/raw').iterdir() if p.is_dir() and hint.lower() in p.name.lower())
         if len(matches) != 1: raise ValueError(f'{did}: expected exactly one source folder, got {matches}')
         folder = matches[0]; spec = config['datasets']['sources'][config['datasets']['source_ids'][did]]
@@ -188,7 +202,7 @@ def scan(root, config, output, reviews=None, d4_order=None, overrides=None):
             review = decisions.get(rel)
             if review and review.get('image_sha256') == r['image_sha256'] and review.get('label_sha256') == (r['label_sha256'] or '') and review.get('schema_sha256') == r['schema_sha256']:
                 r['additional_group'] = review.get('additional_group','')
-            r['status'] = assign_status(r, review)
+            r['status'] = assign_status(r, review, require_review)
             r['review'] = review
             records.append(r)
         orphan_labels.extend(p.relative_to(root).as_posix() for p in folder.glob('*/labels/*.txt') if p not in matched_labels)
@@ -231,22 +245,26 @@ def scan(root, config, output, reviews=None, d4_order=None, overrides=None):
             writer.writerow(row)
     write_json(output/'groups.json', [{'group':g[0]['group'],'members':[r['image'] for r in g],'sources':sorted({r['source'] for r in g})} for g in groups])
     summary={'sources':{},'target_names':target_names,'status_counts':dict(Counter(r['status'] for r in records)),
+             'prior_review_ledger_found':prior_path.is_file(), 'manual_review_required':require_review,
              'similarity_groups':len(groups),'cross_source_groups':sum(len({r['source'] for r in g})>1 for g in groups),
              'orphan_labels':orphan_labels,'warning':'Candidate labels are not an approved dataset. Similarity groups are conservative, not verified duplicates.',
              'duplicate_rows_removed':sum(r['duplicate_rows_removed'] for r in records),'threshold':threshold}
-    for did in HINTS:
+    for did in source_ids:
         subset=[r for r in records if r['source']==did]
         summary['sources'][did]={'images':len(subset),'empty_labels':sum(r['empty_label'] for r in subset),'statuses':dict(Counter(r['status'] for r in subset)),
                                 'parsed_records':dict(Counter(a['source_class'] for r in subset for a in r['annotations']))}
     write_json(output/'summary.json',summary)
     write_json(output/'settings.json',config)
-    write_json(output/'run_info.json',{'script_sha256':digest(Path(__file__)), 'python':sys.version, 'd4_cli_order':d4_order, 'class_orders':{did:next(r['class_order'] for r in records if r['source']==did) for did in HINTS}, 'source_tree_read_only':True})
+    write_json(output/'run_info.json',{'script_sha256':digest(Path(__file__)), 'python':sys.version, 'd4_cli_order':d4_order, 'class_orders':{did:next(r['class_order'] for r in records if r['source']==did) for did in source_ids}, 'source_tree_read_only':True})
     return records, summary
 
 
 def export_reviewed(root, records, config, output):
-    approved=[r for r in records if r['status']=='approved']
+    require_review=config['datasets']['annotation_policy'].get('require_domain_and_completeness_review', True)
+    statuses={'approved'} if require_review else {'approved', 'provisional'}
+    approved=[r for r in records if r['status'] in statuses]
     if not approved: raise ValueError('No approved images: review queue was saved; no training dataset exported')
+    quality='provisional' if any(r['status']=='provisional' for r in approved) else 'reviewed'
     fractions=[config['split'][k] for k in ['train_pool','val','test']]
     if any(v <= 0 for v in fractions) or abs(sum(fractions)-1)>1e-9: raise ValueError('Invalid split fractions')
     splits=['train','val','test']; seed=config['split']['split_seed']
@@ -283,10 +301,13 @@ def export_reviewed(root, records, config, output):
         shutil.copy2(src,dest/sp/'images'/(stem+src.suffix.lower()))
         label=''.join(f"{a['target_id']} "+' '.join(f'{v:.12g}' for v in a['box'])+'\n' for a in r['annotations'])
         (dest/sp/'labels'/(stem+'.txt')).write_text(label)
-        exported.append({'image':r['image'],'source':r['source'],'group':r['group'],'split':sp,'export_stem':stem})
+        exported.append({'image':r['image'],'source':r['source'],'group':r['group'],'split':sp,'export_stem':stem,
+                         'review_status':r['status'],'image_sha256':r['image_sha256'],
+                         'export_label_sha256':digest(dest/sp/'labels'/(stem+'.txt'))})
     (dest/'data.yaml').write_text(yaml.safe_dump({'path':str(dest.resolve()),'train':'train/images','val':'val/images','test':'test/images','names':config['task']['core_classes']},sort_keys=False))
     write_json(dest/'split_manifest.json',exported)
-    write_json(dest/'counts.json',{'images':dict(Counter(r['split'] for r in exported)),'annotations':counts,
+    write_json(dest/'counts.json',{'quality':quality,'manual_review_required':require_review,
+                                'images':dict(Counter(r['split'] for r in exported)),'annotations':counts,
                                 'source_by_split':{sp:dict(Counter(r['source'] for r in exported if r['split']==sp)) for sp in splits},
                                 'split_method':'seeded greedy grouped balance of image counts, class presence and configured source strata; approximate ratios',
                                 'frozen_run':'Use this exported run for the entire experiment; rescanning changed membership can change group IDs and splits.'})
@@ -319,7 +340,7 @@ def main(argv=None):
     parser.add_argument('--reviews',type=Path,help='Completed review.csv from a previous scan')
     parser.add_argument('--label-overrides',type=Path,help='Corrected source-format labels, mirroring data/raw/... relative paths')
     parser.add_argument('--d4-class-order',choices=['crack,dent','dent,crack'],help='Explicit numeric order: class 0,class 1')
-    parser.add_argument('--export',action='store_true',help='Export approved, complete images only')
+    parser.add_argument('--export',action='store_true',help='Export eligible images under the configured review policy')
     parser.add_argument('--contact-sheets',action='store_true')
     args=parser.parse_args(argv); root=args.root.resolve()
     config=yaml.safe_load((root/args.config).read_text(encoding='utf-8-sig'))

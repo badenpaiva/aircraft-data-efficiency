@@ -1,0 +1,12 @@
+# Python 3.10+; dataset preparation and the Ultralytics detection baseline.
+# Install a CUDA-compatible PyTorch build separately when using an NVIDIA GPU.
+# Versions below match the successful CPU smoke run on 2026-10-07.
+numpy==2.2.6
+Pillow==11.3.0
+PyYAML==6.0.2
+ImageHash==4.3.2
+scipy==1.15.3
+PyWavelets==1.8.0
+ultralytics==8.4.173
+torch==2.14.1
+torchvision==0.29.1

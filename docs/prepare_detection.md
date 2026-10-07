@@ -1,10 +1,56 @@
-# Preparing the combined D1/D2/D4 detection dataset
+# Preparing the D1 detection dataset
+
+## Current D1-only workflow (2026-10-06)
+
+Manual approval is temporarily optional by user decision:
+`datasets.annotation_policy.require_domain_and_completeness_review: false`.
+Valid, nonempty unreviewed candidates receive `provisional` status and may be
+exported with `--export`. Existing exclusions, quarantine decisions, invalid
+labels, empty-label checks and related-image grouping still apply. Set the flag
+back to `true` to restore the approval requirement, then export into a new version.
+Provisional exports include unreviewed validation/test images and must not be
+described as certified evaluation data. See [detection commands](detection_pipeline.md).
+
+```powershell
+.\.venv\Scripts\python.exe -B tools/prepare_detection.py --output data/processed/d1_provisional_v1 --export
+```
+
+Preparation now reads `datasets.experiment_sources` from `config/experiment.yaml`.
+Only D1 is selected, with `pool_supplementary: false`; D2/D3/D4 folders are not
+scanned. Multiple selected sources require explicit pooling in the config.
+The combined-run counts below are historical, not counts for this run.
+
+Install the pinned preparation dependencies with Python 3.10 or newer:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -B tools/prepare_detection.py --output data/interim/d1_review_20261006 --contact-sheets
+```
+
+The output contains `review.csv`, `summary.json`, `manifest.jsonl`, related-image
+groups, candidate labels and contact sheets (25 images per sheet). Copy
+`review.csv` to a working review file before editing. Follow the review and
+approval rules below; this scan does not approve images or export training data.
+If the prior review ledger is missing, its previous image-level decisions cannot
+be restored by scanning; the summary records whether the ledger was found.
+
+After completing reviews, export into a new directory:
+
+```powershell
+.\.venv\Scripts\python.exe -B tools/prepare_detection.py --output data/processed/d1_v1 --reviews data/interim/d1_review_20261006/review_working.csv --export
+```
+
+`requirements.txt` now includes the detection library. The approval instructions
+below describe the stricter reviewed workflow, which remains available.
+
+## Historical combined preparation workflow
 
 Implemented script: `tools/prepare_detection.py`. Python dependencies: Pillow, numpy, PyYAML, ImageHash. These are available in the current environment. Run commands from the repository root. No GPU is needed.
 
 ## What it does
 
-- Reads D1, D2 and D4 without modifying raw images or labels.
+- Reads only configured experiment sources without modifying raw images or labels.
 - Reads target classes, mapping, seed, split fractions and duplicate threshold from `config/experiment.yaml`.
 - Validates box/polygon geometry, preserves original polygons and source line numbers in a JSONL manifest, and creates enclosing boxes for detection candidates.
 - Removes identical repeated annotation rows, excludes whole images with unmapped defects, and quarantines corrupt images, missing/invalid labels and prior unresolved review findings.
@@ -12,7 +58,7 @@ Implemented script: `tools/prepare_detection.py`. Python dependencies: Pillow, n
 - Removes redundant byte-identical image copies only when annotations agree; conflicting identical-image labels are quarantined.
 - Groups pHash candidates across sources, related numeric filename families, matching Roboflow base names within each source, and reviewer-supplied groups. Near-duplicates are grouped, not silently deleted.
 - Generates batches of 25 overlay thumbnails tied to CSV row numbers. Check full-resolution images before approval; thumbnails are a screening aid.
-- Exports only approved images. Related groups stay together in approximately 70/10/20 train/val/test splits, balancing class presence and source counts. Splits must include every core class, otherwise export fails with an explanation.
+- Exports approved images, plus provisional images when manual review is disabled. Related groups stay together in approximately 70/10/20 train/val/test splits, balancing class presence and source counts. Splits must include every core class, otherwise export fails with an explanation.
 
 This cannot automatically establish aircraft provenance, remove unknown source augmentation, find every missing annotation or distinguish every scratch from a crack. Candidate labels are not certified training data. The script does not crop, resize or fabricate annotations, and does not create segmentation masks.
 

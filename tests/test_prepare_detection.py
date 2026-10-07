@@ -47,7 +47,8 @@ class PreparationTests(unittest.TestCase):
 
     def fixture(self, root):
         config={'task':{'core_classes':['dent','crack','paint_peeling']},
-                'datasets':{'unmapped_class_policy':'exclude_images','annotation_policy':{'review_ledger':'reviews.json'},
+                'datasets':{'experiment_sources':['one','two','four'],'pool_supplementary':True,
+                            'unmapped_class_policy':'exclude_images','annotation_policy':{'review_ledger':'reviews.json'},
                             'source_ids':{'D1':'one','D2':'two','D4':'four'},'sources':{}},
                 'dedup':{'hamming_threshold':0},'split':{'train_pool':.7,'val':.1,'test':.2,'split_seed':1234,'stratify_by_source':True}}
         rng=np.random.default_rng(5)
@@ -60,6 +61,48 @@ class PreparationTests(unittest.TestCase):
                 Image.fromarray(rng.integers(0,256,(32,32,3),dtype=np.uint8)).save(base/'train/images'/f'scene{i}.png')
                 (base/'train/labels'/f'scene{i}.txt').write_text(''.join(f'{k} .5 .5 .2 .2\n' for k in range(len(names))))
         return config
+
+    def test_d1_only_ignores_other_present_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); config=self.fixture(root)
+            config['datasets'].update(experiment_sources=['one'], pool_supplementary=False)
+            records,summary=scan(root,config,root/'d1')
+            self.assertEqual(len(records),20)
+            self.assertEqual(set(summary['sources']),{'D1'})
+            self.assertTrue(all(r['source']=='D1' for r in records))
+            info=json.loads((root/'d1/run_info.json').read_text())
+            self.assertEqual(set(info['class_orders']),{'D1'})
+
+    def test_disabled_pooling_rejects_multiple_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); config=self.fixture(root)
+            config['datasets']['pool_supplementary']=False
+            with self.assertRaisesRegex(ValueError,'pool_supplementary'):
+                scan(root,config,root/'scan')
+
+    def test_provisional_mode_preserves_quarantine_and_exclusions(self):
+        r={'issues':[], 'annotations':[{'target_class':'crack'}]}
+        self.assertEqual(assign_status(r,None,False),'provisional')
+        self.assertEqual(assign_status(r,None,True),'pending_review')
+        for issues, expected in [(['missing_label'],'quarantine_invalid'),
+                                 (['unmapped_class:scratch'],'excluded_unmapped')]:
+            self.assertEqual(assign_status({**r,'issues':issues},None,False),expected)
+        self.assertEqual(assign_status({**r,'annotations':[]},None,False),'quarantine_empty')
+        self.assertEqual(assign_status({**r,'prior_review_note':'uncertain'},None,False),'quarantine_prior_review')
+
+    def test_provisional_export_and_reenabled_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); config=self.fixture(root)
+            config['datasets']['annotation_policy']['require_domain_and_completeness_review']=False
+            records,_=scan(root,config,root/'scan')
+            export_reviewed(root,records,config,root/'scan')
+            counts=json.loads((root/'scan/dataset/counts.json').read_text())
+            self.assertEqual(counts['quality'],'provisional')
+            manifest=json.loads((root/'scan/dataset/split_manifest.json').read_text())
+            self.assertTrue(all(r['review_status']=='provisional' for r in manifest))
+            config['datasets']['annotation_policy']['require_domain_and_completeness_review']=True
+            with self.assertRaisesRegex(ValueError,'No approved'):
+                export_reviewed(root,records,config,root/'strict')
 
     def test_scan_review_export_preserves_raw_and_groups(self):
         with tempfile.TemporaryDirectory() as tmp:

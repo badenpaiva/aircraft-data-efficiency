@@ -14,6 +14,11 @@ project:
   name: aircraft-data-efficiency
   version: 0.1.0
 
+# Current runnable milestone: D1-only YOLOv8n development baseline.
+# Training uses training.*, the first configured seed (unless overridden),
+# core_classes and the review policy. The arms/detectors/fractions/statistics
+# below describe a future grid; the baseline scripts do not execute that grid.
+
 # -----------------------------------------------------------------------------
 # Task definition. Depends on the dataset audit (README 8.1 and 8.2).
 # -----------------------------------------------------------------------------
@@ -23,7 +28,7 @@ task:
   #   segmentation  -> masks, YOLO-seg / CHPDNet, mIoU metrics
   #   both_tracks   -> run both with separate metrics; combined arm is a 3rd track
   #
-  # Detetction will be our first milestone and then we will work toward segmentation
+  # Detection on D1 is the first milestone; segmentation is a later stage.
   type: detection
 
   # Unified class list used across ALL datasets after class_map.py remaps them.
@@ -36,7 +41,7 @@ task:
   stretch_classes: [corrosion]
 
   # Classes whose recall is tracked and reported separately from overall mAP.
-  safety_critical_classes: [crack, corrosion]   # core claim = crack recall; corrosion recall only if the stretch goal is done
+  safety_critical_classes: [crack]   # D1-only detection; corrosion belongs to the later stretch goal
   # Coverage caveat: `corrosion` exists ONLY in the SUTD `rust` labels (D3), a
   # supplementary source. The primary source (D1) has crack/dent/paint only.
   # Audit: D3 has 2,039 rust boxes in 639 images (before dedup), but 72% of
@@ -73,40 +78,40 @@ subsampling:
 #      contrast equalization/class remapping are rejected: they confound the
 #      classical_aug arm and put augmented copies of one photo in many splits.
 #   2. Version is pinned below. Changing it needs a commit message saying why.
-#   3. Roboflow's own train/valid/test splits are IGNORED. Sources are pooled,
-#      deduped (cross-source), then re-split with `split:` below.
+#   3. Roboflow's own train/valid/test splits are IGNORED. Selected sources are
+#      grouped for related images, then re-split with `split:` below.
 #   4. D1 mixes boxes and polygons; conversion and evaluation require review.
 #   5. Synthetic images (if any source contains them) must never reach val/test.
 # -----------------------------------------------------------------------------
 datasets:
   config_file: config/datasets.yaml
-  # Primary dataset: Innovation Hangar v2 (largest un-augmented source with
-  # crack/dent/paint). The main experiment grid runs on experiment_sources.
+  # Primary dataset: Innovation Hangar v2 stock export with crack/dent/paint.
+  # Source transformations remain unresolved; stock does not certify originals.
   primary: innovation_hangar_v2
   experiment_sources: [innovation_hangar_v2]
-  # Smaller sets kept for extra checks (e.g. corrosion via SUTD "rust", or
-  # cross-dataset generalization). TBD: false -> the main grid stays
-  # single-source; true -> add them to experiment_sources before dedup/splitting.
-  # D3 (sutd_aircraft_ai) is needed only for the corrosion stretch goal.
+  # Archived supplementary source metadata; not included in this D1-only run.
+  # Preparation reads only experiment_sources, even when other folders exist.
   supplementary_sources: [ddiisc_skin_defects, sutd_aircraft_ai, xiong_zenodo_crack_dent]
   # Never use these as a data source: Dibya (excluded)'s images are all contained in D1
   # (audit: 1,115/1,115 phash<=5 matches), so pooling it would leak.
   excluded_sources: [dibya_skin_defects]
-  pool_supplementary: TBD
+  pool_supplementary: false
   # Exclude the whole image when annotated or visually discovered defects are unmapped.
   # Retain all original records in the archive; never silently call these backgrounds.
   unmapped_class_policy: exclude_images
   annotation_policy:
-    detection: reviewed_polygons_to_enclosing_boxes
+    detection: polygons_to_enclosing_boxes
     preserve_original_polygons: true
-    require_domain_and_completeness_review: true
-    unknown_review_status: quarantine
+    # Temporary development mode. Set true and rebuild to restore approval gates.
+    require_domain_and_completeness_review: false
+    unknown_review_status: provisional
     empty_labels: quarantine_until_verified_or_reannotated
     segmentation_evaluation: manually_draw_or_correct_then_independent_review
     allow_box_derived_evaluation_masks: false
     verified_complete_mask_images: 0
     review_ledger: docs/d1_visual_review.json
     protocol: docs/dataset_audit.md
+  # Manual-review criteria; provisional mode cannot automatically certify them.
   domain_policy:
     core: real_aircraft_external_skin
     preserved_aircraft: eligible_tagged_separate_stratum_after_review
@@ -125,7 +130,7 @@ datasets:
 
   sources:
     innovation_hangar_v2:                    # README ID: D1 (PRIMARY)
-      status: screening_complete_admission_blocked # source transformations and completeness unresolved
+      status: provisional_detection_available # manual certification remains incomplete
       origin: roboflow
       url: https://universe.roboflow.com/innovation-hangar/innovation-hangar-v2/dataset/2
       version: 2                              # "2023-11-18": no preprocessing, no augmentation
@@ -267,15 +272,15 @@ datasets:
 
 
 split:
-  # Applied to the POOLED sources AFTER dedup, grouped so near-duplicates never
+  # Applied to the selected sources AFTER grouping, so near-duplicates never
   # straddle splits. Roboflow's original splits are discarded.
   train_pool: 0.70
   val: 0.10
   test: 0.20
   split_seed: 1234          # fixed; the test set must be identical across all runs
-  stratify_by_source: true  # every split keeps each source's share (sources differ in domain)
+  stratify_by_source: false # D1 only; retain class balancing and related-image grouping
 
-# Runs on the POOLED set so cross-source duplicates are caught too.
+# Runs on experiment_sources only (currently D1).
 dedup:
   method: phash
   hamming_threshold: 5
@@ -315,17 +320,42 @@ detectors:
   - {name: yolo11,  config: config/detectors/yolo11.yaml,  role: comparison}
   - {name: yolo26,  config: config/detectors/yolo26.yaml,  role: comparison}
 
-# Shared training settings so detectors differ ONLY in architecture.
+# Active development-baseline settings; full architecture comparisons are planned.
 training:
+  model: yolov8n.pt         # small pretrained baseline for the first detection milestone
+  data: data/processed/d1_provisional_v1/dataset/data.yaml
+  project: results/detection
+  name: d1_baseline
   image_size: 640
   resize_policy: aspect_preserving_letterbox
   image_interpolation: bilinear
   mask_interpolation: nearest
   low_visibility_policy: review_or_quarantine
-  epochs: TBD               # fixed budget across detectors, or early stopping w/ same patience
-  batch_size: TBD
+  epochs: 30                # development baseline, not the final research grid
+  batch_size: 8
+  patience: 10
+  workers: 0                # portable Windows default
+  optimizer: AdamW
+  learning_rate: 0.001
   pretrained_init: coco     # [15] found init matters little; fix it so it is not a confound
-  device: cuda
+  device: auto              # CUDA when available, otherwise CPU
+  # Explicitly disable stochastic augmentation for the first baseline.
+  augmentation:
+    hsv_h: 0.0
+    hsv_s: 0.0
+    hsv_v: 0.0
+    degrees: 0.0
+    translate: 0.0
+    scale: 0.0
+    shear: 0.0
+    perspective: 0.0
+    flipud: 0.0
+    fliplr: 0.0
+    mosaic: 0.0
+    mixup: 0.0
+    cutmix: 0.0
+    copy_paste: 0.0
+    multi_scale: 0.0
 
 # -----------------------------------------------------------------------------
 # Metrics
@@ -335,14 +365,14 @@ metrics:
   detection: [map50, map50_95, per_class_ap]
   segmentation: [miou, per_class_iou]
   safety_recall:
-    classes: [crack, corrosion]
+    classes: [crack]
     iou_threshold: 0.5
-    confidence_threshold: TBD   # fixed operating point so recall is comparable across arms
+    confidence_threshold: 0.25  # development operating point; report separately from AP
     also_report_precision_at_that_point: true
   cost: [train_time_sec, inference_ms_per_image, n_parameters]
 
 # -----------------------------------------------------------------------------
-# Reproduction gate (stopping rule)
+# Proposed reproduction gate for future research runs (not the development pilot)
 # New-detector results are NOT trusted until the YOLOX baseline is roughly
 # reproduced. Reference values come from [7]: 78.55 mAP with HQGAN, a gain
 # of 5.27 pp, so ~73.28 without. Note [7] used its own dataset (686 images),
@@ -350,7 +380,7 @@ metrics:
 # the gain direction and rough magnitude, and document any gap.
 # -----------------------------------------------------------------------------
 reproduction_gate:
-  enabled: true
+  enabled: false                 # baseline scripts do not implement this future gate
   reference:
     yolox_baseline_map: 73.28     # derived: 78.55 - 5.27
     yolox_hqgan_map: 78.55
@@ -390,5 +420,5 @@ paths:
 # -----------------------------------------------------------------------------
 compute:
   preferred: "Colab / Kaggle GPU"      # TBD: confirm what the team actually has
-  num_workers: 4
+  num_workers: 4                   # future grid; baseline uses training.workers
   deterministic: true                  # set cudnn.deterministic and seed all RNGs

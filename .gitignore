@@ -16,6 +16,7 @@ results/raw/**/*
 # Local detector outputs, downloaded checkpoints and library settings
 results/detection/
 results/hqgan/
+results/studies/
 .ultralytics/
 Ultralytics/
 *.pt

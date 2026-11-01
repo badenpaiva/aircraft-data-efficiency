@@ -1,0 +1,142 @@
+[
+  {
+    "model": "YOLOX-S",
+    "seed": 0,
+    "real_data_percent": 5.0,
+    "map50_percent": 4.360310827273289,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f00500__baseline__yolox\\val\\metrics.json"
+  },
+  {
+    "model": "YOLOX-S",
+    "seed": 0,
+    "real_data_percent": 10.0,
+    "map50_percent": 2.1506446656473392,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f01000__baseline__yolox\\val\\metrics.json"
+  },
+  {
+    "model": "YOLOX-S",
+    "seed": 0,
+    "real_data_percent": 25.0,
+    "map50_percent": 14.358785541429931,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f02500__baseline__yolox\\val\\metrics.json"
+  },
+  {
+    "model": "YOLOX-S",
+    "seed": 0,
+    "real_data_percent": 50.0,
+    "map50_percent": 8.908409065423355,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f05000__baseline__yolox\\val\\metrics.json"
+  },
+  {
+    "model": "YOLOX-S",
+    "seed": 0,
+    "real_data_percent": 100.0,
+    "map50_percent": 36.57976028579583,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f10000__baseline__yolox\\val\\metrics.json"
+  },
+  {
+    "model": "YOLOv8n",
+    "seed": 0,
+    "real_data_percent": 5.0,
+    "map50_percent": 8.672595761881691,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f00500__baseline__yolov8\\val\\metrics.json"
+  },
+  {
+    "model": "YOLOv8n",
+    "seed": 0,
+    "real_data_percent": 10.0,
+    "map50_percent": 12.529005031137958,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f01000__baseline__yolov8\\val\\metrics.json"
+  },
+  {
+    "model": "YOLOv8n",
+    "seed": 0,
+    "real_data_percent": 25.0,
+    "map50_percent": 26.854086104308188,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f02500__baseline__yolov8\\val\\metrics.json"
+  },
+  {
+    "model": "YOLOv8n",
+    "seed": 0,
+    "real_data_percent": 50.0,
+    "map50_percent": 44.00492889101159,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f05000__baseline__yolov8\\val\\metrics.json"
+  },
+  {
+    "model": "YOLOv8n",
+    "seed": 0,
+    "real_data_percent": 100.0,
+    "map50_percent": 49.20973310406829,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f10000__baseline__yolov8\\val\\metrics.json"
+  },
+  {
+    "model": "YOLO11n",
+    "seed": 0,
+    "real_data_percent": 5.0,
+    "map50_percent": 8.391444683466748,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f00500__baseline__yolo11\\val\\metrics.json"
+  },
+  {
+    "model": "YOLO11n",
+    "seed": 0,
+    "real_data_percent": 10.0,
+    "map50_percent": 12.225718372401841,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f01000__baseline__yolo11\\val\\metrics.json"
+  },
+  {
+    "model": "YOLO11n",
+    "seed": 0,
+    "real_data_percent": 25.0,
+    "map50_percent": 26.434524344849937,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f02500__baseline__yolo11\\val\\metrics.json"
+  },
+  {
+    "model": "YOLO11n",
+    "seed": 0,
+    "real_data_percent": 50.0,
+    "map50_percent": 40.889623908174286,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f05000__baseline__yolo11\\val\\metrics.json"
+  },
+  {
+    "model": "YOLO11n",
+    "seed": 0,
+    "real_data_percent": 100.0,
+    "map50_percent": 46.70497914662296,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f10000__baseline__yolo11\\val\\metrics.json"
+  },
+  {
+    "model": "YOLO26n",
+    "seed": 0,
+    "real_data_percent": 5.0,
+    "map50_percent": 7.385994322655988,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f00500__baseline__yolo26\\val\\metrics.json"
+  },
+  {
+    "model": "YOLO26n",
+    "seed": 0,
+    "real_data_percent": 10.0,
+    "map50_percent": 10.52871871526959,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f01000__baseline__yolo26\\val\\metrics.json"
+  },
+  {
+    "model": "YOLO26n",
+    "seed": 0,
+    "real_data_percent": 25.0,
+    "map50_percent": 22.665967208444258,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f02500__baseline__yolo26\\val\\metrics.json"
+  },
+  {
+    "model": "YOLO26n",
+    "seed": 0,
+    "real_data_percent": 50.0,
+    "map50_percent": 37.61966809492442,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f05000__baseline__yolo26\\val\\metrics.json"
+  },
+  {
+    "model": "YOLO26n",
+    "seed": 0,
+    "real_data_percent": 100.0,
+    "map50_percent": 49.43791619162721,
+    "source": "D:\\Documents\\aircraft-data-efficiency\\results\\studies\\sutd_full_v1\\runs\\seed0_f10000__baseline__yolo26\\val\\metrics.json"
+  }
+]

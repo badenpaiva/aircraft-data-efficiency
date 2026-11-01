@@ -12,7 +12,7 @@ def main():
     parser.add_argument('--config', default='config/experiment.yaml')
     parser.add_argument('--data')
     parser.add_argument('--weights', required=True)
-    parser.add_argument('--name', default='d1_predictions')
+    parser.add_argument('--name', default='detection_predictions')
     parser.add_argument('--limit', type=int, default=12)
     parser.add_argument('--device')
     args = parser.parse_args()

@@ -1,0 +1,96 @@
+version: 1
+experiment: config/experiment.yaml
+fractions:
+- 1.0
+- 0.5
+- 0.25
+- 0.1
+- 0.05
+seeds:
+- 0
+- 1
+- 2
+min_instances_per_class: 5
+models:
+  yolox:
+    backend: yolox
+    architecture: yolox-s
+    weights: .ultralytics/weights/yolox_s.pth
+  yolov8:
+    backend: ultralytics
+    weights: yolov8n.pt
+  yolo11:
+    backend: ultralytics
+    weights: yolo11n.pt
+  yolo26:
+    backend: ultralytics
+    weights: yolo26n.pt
+arms:
+  baseline:
+    kind: baseline
+  classical_light:
+    kind: classical
+    copies_per_real: 1
+    degrees: 10
+    flip_probability: 0.2
+    noise_std: 0.01
+  classical_heavy:
+    kind: classical
+    copies_per_real: 3
+    degrees: 20
+    flip_probability: 0.5
+    noise_std: 0.03
+  hqgan_0p5:
+    kind: hqgan
+    synthetic_ratio: 0.5
+  hqgan_1p0:
+    kind: hqgan
+    synthetic_ratio: 1.0
+  hqgan_2p0:
+    kind: hqgan
+    synthetic_ratio: 2.0
+training:
+  epochs: 30
+  image_size: 640
+  batch_size: 8
+  workers: 0
+  cpu_threads: 2
+  learning_rate: 0.001
+  optimizer: AdamW
+  patience: 0
+evaluation:
+  confidence_floor: 0.001
+  operating_confidence: 0.25
+  matching_iou: 0.5
+  nms_iou: 0.7
+  max_detections: 300
+  confidence_sweep:
+  - 0.05
+  - 0.1
+  - 0.25
+  - 0.5
+  - 0.75
+  bootstrap_samples: 2000
+  bootstrap_seed: 1234
+  preview_count: 12
+gan:
+  config: config/hqgan_sutd.yaml
+  steps: 20000
+  candidates_per_class: 400
+  fidelity: exploratory_reduced_model
+screening:
+  min_side: 16
+  min_gray_std: 5.0
+  min_laplacian_variance: 15.0
+  near_duplicate_hamming: 2
+yolox:
+  repository: .ultralytics/vendor/YOLOX
+  commit: 6ddff4824372906469a7fae2dc3206c7aa4bbaee
+  weights_url: https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.pth
+statistics:
+  reference_arm: baseline
+  alpha: 0.05
+  paired_metrics:
+  - map50
+  - map50_95
+  - macro_f1

@@ -15,7 +15,7 @@ def main():
     parser.add_argument('--data')
     parser.add_argument('--weights', required=True)
     parser.add_argument('--split', choices=['val','test'], default='val')
-    parser.add_argument('--name', default='d1_evaluation')
+    parser.add_argument('--name', default='detection_evaluation')
     parser.add_argument('--device')
     parser.add_argument('--smoke', action='store_true', help='Evaluate nine validation samples at 128px for a pipeline check')
     args = parser.parse_args()

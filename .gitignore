@@ -1,4 +1,4 @@
-﻿# Local datasets (see config/datasets.yaml) — keep empty dir skeleton in git
+﻿# Local datasets (see config/experiment.yaml) — keep empty dir skeleton in git
 data/**/*
 !data/**/.gitkeep
 
@@ -15,6 +15,14 @@ results/raw/**/*
 
 # Local detector outputs, downloaded checkpoints and library settings
 results/detection/
+results/hqgan/
 .ultralytics/
 Ultralytics/
 *.pt
+
+# Generated outputs and local test scratch
+results/**/*
+!results/**/.gitkeep
+.test-tmp/
+tmp/
+*.cache

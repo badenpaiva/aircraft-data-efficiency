@@ -10,6 +10,10 @@ from detection_pipeline import ROOT, load_config, resolve
 
 
 def main(argv=None):
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == '--study':
+        from detection_study import main as study_main
+        return study_main(arguments[1:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', default='config/experiment.yaml')
     parser.add_argument('--data', help='Override the prepared dataset YAML')

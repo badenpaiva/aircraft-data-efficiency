@@ -1,0 +1,6 @@
+-r requirements.txt
+pycocotools==2.0.11
+loguru==0.7.3
+tabulate==0.9.0
+tqdm==4.67.1
+thop==0.1.1.post2209072238

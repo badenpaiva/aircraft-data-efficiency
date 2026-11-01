@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 import csv
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import shutil
@@ -15,7 +16,7 @@ import numpy as np
 import imagehash
 import yaml
 from PIL import Image, ImageDraw, ImageOps
-from review_d1 import parse_line
+from annotation_geometry import parse_line
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tif', '.tiff'}
@@ -131,6 +132,87 @@ def write_json(path, data):
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False)+'\n', encoding='utf-8')
 
 
+def scan_coco(root, source, spec, targets, decisions, require_review):
+    """Read split-local COCO IDs and preserve JSON provenance; never modify raw data."""
+    folder = (root / spec['path']).resolve()
+    if not folder.is_relative_to((root / 'data/raw').resolve()):
+        raise ValueError('COCO source must be inside data/raw')
+    records, seen_paths, referenced = [], set(), set()
+    for split in ('train', 'val', 'test'):
+        label = folder / 'annotations' / f'instances_{split}.json'
+        image_folder = folder / 'images' / split
+        if not label.exists():
+            source_split = 'valid' if split == 'val' else split
+            label = folder / source_split / '_annotations.coco.json'
+            image_folder = folder / source_split
+        data = json.loads(label.read_text(encoding='utf-8-sig'))
+        categories = {c['id']: c['name'] for c in data['categories']}
+        images = {im['id']: im for im in data['images']}
+        if len(categories) != len(data['categories']) or len(images) != len(data['images']):
+            raise ValueError(f'Duplicate COCO category/image IDs: {label}')
+        by_image = defaultdict(list)
+        annotation_ids = set()
+        for a in data['annotations']:
+            if a['id'] in annotation_ids or a['image_id'] not in images or a['category_id'] not in categories:
+                raise ValueError(f'Duplicate annotation ID or dangling COCO reference: {label}')
+            annotation_ids.add(a['id']); by_image[a['image_id']].append(a)
+        label_hash = digest(label)
+        schema_hash = hashlib.sha256(json.dumps({'categories': categories, 'mapping': spec['class_map'], 'targets': targets}, sort_keys=True).encode()).hexdigest()
+        for im in data['images']:
+            image = (image_folder / im['file_name']).resolve()
+            if not image.is_relative_to(image_folder.resolve()) or image in seen_paths:
+                raise ValueError(f'Unsafe or repeated COCO image path: {image}')
+            seen_paths.add(image); referenced.add(image)
+            rel = image.relative_to(root.resolve()).as_posix()
+            r = {'image': rel, 'source': source, 'original_split': split,
+                 'original_label': label.relative_to(root.resolve()).as_posix(),
+                 'effective_label': str(label), 'image_sha256': digest(image),
+                 'original_label_sha256': label_hash, 'label_sha256': label_hash,
+                 'schema_sha256': schema_hash, 'class_order': categories,
+                 'class_order_evidence': 'coco_category_ids', 'annotations': [],
+                 'issues': [], 'phash': None, 'duplicate_rows_removed': 0,
+                 'empty_label': not by_image[im['id']]}
+            width, height = im['width'], im['height']
+            if width <= 0 or height <= 0:
+                raise ValueError(f'Invalid COCO dimensions: {rel}')
+            try:
+                with Image.open(image) as picture:
+                    picture.load(); r['size'] = list(picture.size)
+                    if picture.size != (width, height): r['issues'].append('coco_dimension_mismatch')
+                    if picture.getexif().get(274, 1) != 1: r['issues'].append('nontrivial_exif_orientation')
+                    r['phash'] = int(str(imagehash.phash(picture)), 16)
+            except Exception as exc:
+                r['issues'].append(f'corrupt_image:{type(exc).__name__}')
+            seen = set()
+            for a in by_image[im['id']]:
+                raw_class = categories[a['category_id']]; target = spec['class_map'].get(raw_class)
+                if target not in targets: r['issues'].append(f'unmapped_class:{raw_class}')
+                if a.get('iscrowd', 0): r['issues'].append('unsupported_crowd_annotation')
+                box = a.get('bbox', [])
+                if len(box) != 4 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in box):
+                    r['issues'].append('invalid_coco_box'); continue
+                x, y, w, h = box
+                if min(x, y) < 0 or min(w, h) <= 0 or x+w > width+1e-6 or y+h > height+1e-6:
+                    r['issues'].append('coco_box_outside_image'); continue
+                key = (a['category_id'], *box)
+                if key in seen:
+                    r['duplicate_rows_removed'] += 1; continue
+                seen.add(key)
+                r['annotations'].append({'line': a['id'], 'source_class': raw_class,
+                    'kind': 'box', 'coordinates': box, 'target_class': target,
+                    'target_id': targets.index(target) if target in targets else None,
+                    'box': [(x+w/2)/width, (y+h/2)/height, w/width, h/height]})
+            review = decisions.get(rel)
+            if review and all(review.get(k) == r[k] for k in ('image_sha256', 'label_sha256', 'schema_sha256')):
+                r['additional_group'] = review.get('additional_group', '')
+            r['status'] = assign_status(r, review, require_review); r['review'] = review
+            records.append(r)
+    image_roots = [folder / 'images'] if (folder / 'images').exists() else [folder / s for s in ('train', 'valid', 'test')]
+    unlisted = {p.resolve() for base in image_roots for p in base.rglob('*') if p.suffix.lower() in EXTENSIONS} - referenced
+    if unlisted: raise ValueError(f'{len(unlisted)} image files missing from COCO manifests')
+    return records
+
+
 def scan(root, config, output, reviews=None, d4_order=None, overrides=None):
     target_names = config['task']['core_classes']
     datasets = config['datasets']
@@ -140,7 +222,8 @@ def scan(root, config, output, reviews=None, d4_order=None, overrides=None):
     selected = datasets.get('experiment_sources')
     if not isinstance(selected, list) or not selected or len(set(selected)) != len(selected):
         raise ValueError('experiment_sources must be a nonempty list of unique source names')
-    supported = {datasets['source_ids'][did]: did for did in HINTS}
+    supported = {name: did for did, name in datasets['source_ids'].items()
+                 if did in HINTS or datasets['sources'].get(name, {}).get('annotation') == 'coco_boxes'}
     if any(name not in supported for name in selected):
         raise ValueError('experiment_sources contains an unsupported detection source')
     if datasets.get('pool_supplementary') is not True and len(selected) > 1:
@@ -153,6 +236,12 @@ def scan(root, config, output, reviews=None, d4_order=None, overrides=None):
     decisions = read_reviews(reviews)
     records, orphan_labels = [], []
     for did in source_ids:
+        spec = datasets['sources'][datasets['source_ids'][did]]
+        if spec.get('annotation') == 'coco_boxes':
+            if overrides:
+                raise ValueError('COCO corrections must be made in a versioned source export, not YOLO overrides')
+            records.extend(scan_coco(root, did, spec, target_names, decisions, require_review))
+            continue
         hint = HINTS[did]
         matches = sorted(p for p in (root/'data/raw').iterdir() if p.is_dir() and hint.lower() in p.name.lower())
         if len(matches) != 1: raise ValueError(f'{did}: expected exactly one source folder, got {matches}')

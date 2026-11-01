@@ -1,4 +1,4 @@
-"""Train the configured D1 baseline. Use --smoke for a small one-epoch check."""
+"""Train the configured detection baseline. Use --smoke for a small one-epoch check."""
 import argparse
 from pathlib import Path
 import subprocess
@@ -54,9 +54,11 @@ def main():
                'split_manifest_sha256': sha256(data.parent / 'split_manifest.json')})
     (output / 'environment.txt').write_text(subprocess.check_output([sys.executable,'-m','pip','freeze'], text=True))
     from ultralytics import YOLO
+    from training_progress import attach_ultralytics_progress
     started = time.perf_counter()
     try:
         model = YOLO(config['training']['model'])
+        attach_ultralytics_progress(model)
         model.train(**kwargs)
         write_json(output / 'completion.json', {'status': 'complete', 'quality': counts['quality'],
                    'smoke': args.smoke, 'train_time_sec': time.perf_counter()-started,

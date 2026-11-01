@@ -676,7 +676,7 @@ def cv_predict_dataset(records: list[ImageRec], labels: list[str], mask: np.ndar
 def build_report_md(data: dict[str, Any], runtime_s: float, versions: dict[str, str]) -> str:
     lines: list[str] = []
     lines.append("# Dataset audit report")
-    lines.append("> Geometry inventory only, not admission certification. D1 policies and visual findings: docs/dataset_audit.md. Planning estimates precede admission exclusions.")
+    lines.append("> Geometry inventory only, not admission certification. Active dataset preparation policy: docs/prepare_detection.md. Planning estimates precede admission exclusions.")
     lines.append("")
     lines.append("## TOP FINDINGS")
     for b in data["top_findings"][:10]:

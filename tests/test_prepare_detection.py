@@ -8,7 +8,7 @@ import numpy as np
 import yaml
 from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'tools'))
-from prepare_detection import normalized_annotations, assign_status, group_records, scan, export_reviewed, CHECKS, FIELDS, digest
+from prepare_detection import normalized_annotations, assign_status, group_records, capture_unit, scan, export_reviewed, CHECKS, FIELDS, digest
 
 class PreparationTests(unittest.TestCase):
     def test_polygon_mapping_and_duplicate_rows(self):
@@ -44,6 +44,23 @@ class PreparationTests(unittest.TestCase):
         groups=group_records(rs,1)
         self.assertEqual(sorted(map(len,groups)),[1,3])
         self.assertEqual(rs[0]['group'],rs[2]['group'])
+
+    def test_capture_units_keep_a_sequence_together(self):
+        patterns=[r'^(?P<unit>(?:sceneadd|scene)\d+?)\d{5}(?:-Copy)?_jpg', r'^image-\d+(?P<unit>(?:-\d+)*)-?_jpg']
+        names=['scene700701_jpg.rf.a.jpg','scene700801-Copy_jpg.rf.b.jpg','sceneadd701961_jpg.rf.c.jpg',
+               'sceneadd2104021_jpg.rf.d.jpg','image-059_jpg.rf.e.jpg','image-020-1-1-_jpg.rf.f.jpg','image-021-1-1-_jpg.rf.g.jpg']
+        units=[capture_unit(n,patterns) for n in names]
+        # scene7 and sceneadd7 are different videos; frames of one video and one photo series share a unit.
+        self.assertEqual(units,['0:scene7','0:scene7','0:sceneadd7','0:sceneadd21','1:','1:-1-1','1:-1-1'])
+        self.assertIsNone(capture_unit('anything.jpg',None))
+        with self.assertRaises(ValueError): capture_unit('frame_1.jpg',patterns)
+        with self.assertRaises(ValueError): capture_unit('scene700701_jpg',[r'^scene\d+'])
+        # Far-apart hashes: only the capture unit can join the first two rows.
+        hashes=[0,2**64-1,0x0F0F0F0F0F0F0F0F]
+        rs=[{'image':f'a/{n}','source':'S','image_sha256':str(i),'phash':hashes[i],'capture_unit':u}
+            for i,(n,u) in enumerate(zip(names[:3],units[:3]))]
+        self.assertEqual(sorted(map(len,group_records(rs,0))),[1,2])
+        self.assertEqual(rs[0]['group'],rs[1]['group'])
 
     def fixture(self, root):
         config={'task':{'core_classes':['dent','crack','paint_peeling']},

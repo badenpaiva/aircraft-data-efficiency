@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 from detection_pipeline import check_dataset, sha256, write_json
@@ -38,13 +39,60 @@ def pixel_box(line, width, height, n_classes):
     return cid, box
 
 
-def prepare_patches(data, config, output, stems=None, min_side=8):
+def crop_settings(crop=None, min_side=8):
+    """Validated crop rule; the defaults reproduce the first export (tight box, as annotated).
+
+    margin: context added on every side, as a fraction of that side of the box.
+    min_box_side: boxes with a shorter side are skipped instead of being enlarged.
+    canonical_orientation: turn tall boxes a quarter turn so the long side is horizontal.
+    """
+    settings = {'margin': 0.0, 'min_box_side': min_side, 'canonical_orientation': False, **(crop or {})}
+    if set(settings) != {'margin', 'min_box_side', 'canonical_orientation'}:
+        raise ValueError('Unknown crop setting')
+    margin, side = settings['margin'], settings['min_box_side']
+    if isinstance(side, bool) or not isinstance(side, int) or side < 1:
+        raise ValueError('min_side must be a positive integer')
+    if (isinstance(margin, bool) or not isinstance(margin, (int, float)) or not math.isfinite(margin)
+            or not 0 <= margin <= 0.5):
+        raise ValueError('Crop margin must be a fraction in [0, 0.5]')
+    if not isinstance(settings['canonical_orientation'], bool):
+        raise ValueError('canonical_orientation must be true or false')
+    settings['margin'] = float(margin)
+    return settings
+
+
+def margin_pixels(length, margin):
+    """Context pixels beside a box side; shared by the crop and by the paste that mirrors it."""
+    return math.floor(length*margin + 0.5)
+
+
+def context_patch(rgb, box, crop):
+    """Annotated box with its margin, as a PIL image, plus the window and whether it was turned.
+
+    The box fills the same central part of every patch. A generated patch therefore carries
+    its label by construction: the same central part, mapped through the paste rectangle.
+    Context that would fall outside the photograph is mirrored instead of invented.
+    """
+    x1, y1, x2, y2 = box
+    px, py = margin_pixels(x2-x1, crop['margin']), margin_pixels(y2-y1, crop['margin'])
+    window = (x1-px, y1-py, x2+px, y2+py)
+    inside = (max(0, window[0]), max(0, window[1]), min(rgb.width, window[2]), min(rgb.height, window[3]))
+    pixels = np.asarray(rgb.crop(inside))
+    pads = ((inside[1]-window[1], window[3]-inside[3]), (inside[0]-window[0], window[2]-inside[2]), (0, 0))
+    if any(v for pair in pads for v in pair):
+        pixels = np.pad(pixels, pads, mode='reflect')
+    turned = crop['canonical_orientation'] and (y2-y1) > (x2-x1)
+    if turned:
+        pixels = np.rot90(pixels)  # counter-clockwise; study.augmentation.paste_patch turns it back
+    return Image.fromarray(np.ascontiguousarray(pixels)), list(window), bool(turned)
+
+
+def prepare_patches(data, config, output, stems=None, min_side=8, crop=None):
     """Export native-resolution RGB patches and provenance without touching the source."""
     output = Path(output).resolve()
     if output.exists():
         raise ValueError(f'Output already exists: {output}')
-    if isinstance(min_side, bool) or not isinstance(min_side, int) or min_side < 1:
-        raise ValueError('min_side must be a positive integer')
+    crop = crop_settings(crop, min_side)
     data, counts, manifest, runtime = check_dataset(data, config)
     if output.is_relative_to(data.parent):
         raise ValueError('Patch output must be outside the frozen dataset')
@@ -72,14 +120,16 @@ def prepare_patches(data, config, output, stems=None, min_side=8):
                                   'annotation_index': index, 'class_id': cid, 'class_name': names[cid],
                                   'pixel_box_xyxy': list(box), 'source_image_sha256': row['image_sha256'],
                                   'source_label_sha256': row['export_label_sha256']}
-                    if min(box[2]-box[0], box[3]-box[1]) < min_side:
+                    if min(box[2]-box[0], box[3]-box[1]) < crop['min_box_side']:
                         skipped.append({**provenance, 'reason': 'below_min_side'})
                         continue
+                    patch, window, turned = context_patch(rgb, box, crop)
                     relative = Path('patches') / str(cid) / f'{stem}_{index:04d}.png'
                     target = output / relative
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    rgb.crop(box).save(target)
-                    records.append({**provenance, 'patch': relative.as_posix(), 'sha256': sha256(target)})
+                    patch.save(target)
+                    records.append({**provenance, 'crop_window_xyxy': window, 'quarter_turn': turned,
+                                    'patch': relative.as_posix(), 'sha256': sha256(target)})
         class_counts = Counter(r['class_name'] for r in records)
         if any(class_counts[name] == 0 for name in names):
             raise ValueError('Selected training subset lacks usable patches for every core class')
@@ -91,7 +141,7 @@ def prepare_patches(data, config, output, stems=None, min_side=8):
                   'training_subset_sha256': identity, 'training_sources': sources,
                   'source_image_count': len(rows), 'patch_count': len(records),
                   'patches_by_class': dict(class_counts), 'skipped_count': len(skipped),
-                  'min_side': min_side, 'resize': None,
+                  'min_side': crop['min_box_side'], 'crop': crop, 'resize': None,
                   'warning': 'Bounding-box crops can contain background and other defects; these are not masks or certified isolated defects.'}
         write_json(output / 'manifest.json', report)
         return report

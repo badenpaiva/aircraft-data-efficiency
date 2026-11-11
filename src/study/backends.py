@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 import torch
 
-from detection_pipeline import resolve, sha256, write_json
+from detection_pipeline import resolve, sha256, torch_device, write_json
 from training_progress import Progress, attach_ultralytics_progress
 from .metrics import coco_metrics
 
@@ -22,12 +22,6 @@ def seed_all(seed,threads):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
     torch.set_num_threads(threads)
     torch.backends.cudnn.benchmark=False; torch.backends.cudnn.deterministic=True
-
-
-def torch_device(device):
-    if device=='auto': return 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    if str(device).isdigit(): return 'cuda:'+str(device)
-    return device
 
 
 def synchronize(device):
@@ -89,7 +83,9 @@ class Detector:
                     batch=self.settings['batch_size'],workers=self.settings['workers'],
                     project=str(output.parent),name=output.name,exist_ok=True,device=self.device,
                     seed=seed,deterministic=True,optimizer=self.settings['optimizer'],lr0=self.settings['learning_rate'],
-                    patience=0,amp=False,cache=False,plots=True,save=True,val=True,close_mosaic=0,
+                    # Mixed precision is requested from the recipe; Ultralytics itself turns it off
+                    # on the CPU and on GPUs where its check finds it unreliable.
+                    patience=0,amp=bool(self.settings.get('amp',False)),cache=False,plots=True,save=True,val=True,close_mosaic=0,
                     hsv_h=0,hsv_s=0,hsv_v=0,degrees=0,translate=0,scale=0,shear=0,perspective=0,
                     flipud=0,fliplr=0,mosaic=0,mixup=0,cutmix=0,copy_paste=0,multi_scale=0)
             self.model=YOLO(str(checkpoint))

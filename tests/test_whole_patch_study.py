@@ -74,6 +74,48 @@ class WholePatchTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 w.make_composites(source, output, payload, 'key')
 
+    def test_label_is_the_core_of_a_patch_cropped_with_a_margin(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / 'tmp') as tmp:
+            root = Path(tmp)
+            checkpoint = root / 'weights.pt'
+            checkpoint.write_bytes(b'test checkpoint')
+            patch_file = root / 'patch.png'
+            cv2.imwrite(str(patch_file), np.random.default_rng(0).integers(0, 255, (32, 32, 3), dtype=np.uint8))
+            crop = {'margin': .25, 'min_box_side': 8, 'canonical_orientation': True}
+            row = {'id': 'defect_0', 'path': str(patch_file), 'sha256': w.sha256(patch_file),
+                   'checkpoint': str(checkpoint), 'checkpoint_sha256': w.sha256(checkpoint),
+                   'class_id': 0, 'class_name': 'defect', 'gan_identity': {'crop': crop},
+                   'approved': False, 'reviewer': '', 'defect_box_xyxy': None}
+            settings = settings_for()
+            row['screening'] = {'version': 1, 'stage': 'candidates', 'settings': settings,
+                                'outcome': 'pass', 'fingerprint': fingerprint(row, 'candidates', 'subset', settings)}
+            subset = {'identity': 'subset', 'seed': 0, 'stems': ['real']}
+            queue = root / 'source' / 'gan' / 'key' / 'candidates_review.json'
+            queue.parent.mkdir(parents=True)
+            w.write_json(queue, {'study_subset_identity': 'subset', 'smoke': False, 'candidates': [row]})
+            bg = root / 'bg.png'
+            label = root / 'bg.txt'
+            cv2.imwrite(str(bg), np.full((100, 100, 3), 120, dtype=np.uint8))
+            label.write_text('0 0.15 0.2 0.1 0.2\n')
+            real = {'export_stem': 'real', 'image_path': str(bg), 'label_path': str(label),
+                    'image_sha256': w.sha256(bg), 'export_label_sha256': w.sha256(label),
+                    'targets': [[0, .1, .1, .2, .3]], 'width': 100, 'height': 100, 'split': 'train'}
+            payload = {'subsets': {'key': subset}, 'records': [real], 'names': ['defect'],
+                       'plan_identity': 'plan', 'config': {'arms': {'hqgan_2p0': {'kind': 'hqgan', 'synthetic_ratio': 2}}}}
+            result = w.make_composites(root / 'source', root / 'out', payload, 'key')
+            self.assertEqual(len(result['records']), 2)
+            for r in result['records']:
+                placement = r['augmentation']['placement']
+                x, y, width, height = placement['rectangle_xywh']
+                cx, cy, cw, ch = placement['core_box_xywh']
+                # The real 10x20 box sets the core; the pasted rectangle adds the crop margin around it.
+                self.assertEqual((cw, ch, width, height, cx - x, cy - y), (10, 20, 16, 30, 3, 5))
+                self.assertTrue(placement['quarter_turn'])
+                self.assertEqual(r['targets'][0], real['targets'][0])
+                self.assertEqual(r['targets'][1], [0, cx/100, cy/100, (cx+cw)/100, (cy+ch)/100])
+                self.assertEqual(r['augmentation']['defect_box_xyxy'], [3/16, 5/30, 13/16, 25/30])
+                self.assertEqual(r['augmentation']['method'], w.METHOD)
+
     def test_nested_ratios_and_insufficient_quota(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[1] / 'tmp') as tmp:
             directory = Path(tmp)

@@ -5,9 +5,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
 import torch
-from detection_pipeline import resolve, sha256, write_json
-from augmentation.hqgan.model import Generator
-from augmentation.hqgan.training import save_samples
+from detection_pipeline import resolve, sha256, torch_device, write_json
+from augmentation.hqgan.training import METHOD, sampling_generator, save_samples
 
 
 def main():
@@ -16,17 +15,17 @@ def main():
     p.add_argument('--output', required=True)
     p.add_argument('--count', type=int, default=16)
     p.add_argument('--seed', type=int, default=1)
-    p.add_argument('--device', default='cpu')
+    p.add_argument('--device', default='auto', help='auto (a CUDA GPU if PyTorch can use one, else the CPU), cpu, or cuda:0')
     a = p.parse_args()
     if a.count < 1:
         p.error('count must be positive')
+    a.device = torch_device(a.device)
     output, weights = resolve(a.output), resolve(a.weights)
     checkpoint = torch.load(weights, map_location='cpu', weights_only=True)
-    if checkpoint.get('method') != 'hqgan_paper_guided_reconstruction_v1':
-        p.error('Not a supported HQGAN reconstruction checkpoint')
+    if checkpoint.get('method') != METHOD:
+        p.error('Not a supported HQGAN reconstruction checkpoint (older checkpoints need the code that made them)')
     torch.set_num_threads(2)
-    g = Generator(**checkpoint['architecture']).to(a.device)
-    g.load_state_dict(checkpoint['generator'])
+    g = sampling_generator(checkpoint, a.device)
     output.mkdir(parents=True, exist_ok=False)
     images = save_samples(g, output, a.count, a.seed, a.device)
     write_json(output/'samples.json', {'synthetic':True, 'smoke':checkpoint['smoke'],

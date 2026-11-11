@@ -41,8 +41,11 @@ def inventory(data, experiment):
 def nested_subsets(records, fractions, seed, n_classes, min_instances=5):
     """Grow whole-group subsets; report achieved size rather than claim exact fractions.
 
-    Seeded greedy class/size balancing. Minimum coverage is established at the
-    smallest fraction; if it cannot fit that budget, reject instead of padding.
+    Seeded randomised-greedy class/size balancing: each step takes one of the three
+    best-balancing groups, chosen by the seed. With few large groups a plain greedy
+    choice has no ties, so every seed would otherwise receive the same subset.
+    Minimum coverage is established at the smallest fraction; if it cannot fit that
+    budget, reject instead of padding.
     """
     if not fractions or any(not math.isfinite(f) or not 0 < f <= 1 for f in fractions) or len(set(fractions)) != len(fractions):
         raise ValueError('Fractions must be unique values in (0,1]')
@@ -57,15 +60,20 @@ def nested_subsets(records, fractions, seed, n_classes, min_instances=5):
     total = sum(sizes.values()); total_classes = sum(features.values())
     if min(total_classes) < min_instances: raise ValueError('Training pool lacks minimum class coverage')
     order = sorted(groups,key=lambda g:identity([seed,g]))
+    rng = np.random.default_rng(int(identity(['subset choice',seed])[:16],16))
+    def choose(ranked):
+        # Stable sorts keep the seed's own order among equal scores.
+        return ranked[int(rng.integers(min(3,len(ranked))))]
     selected = []; current = np.zeros(n_classes); n = 0
     smallest_budget = max(1, math.floor(total*min(fractions)))
     while min(current) < min_instances:
         feasible = [g for g in order if g not in selected and n+sizes[g] <= smallest_budget]
-        if not feasible: raise ValueError('Smallest fraction cannot satisfy grouped minimum class coverage')
         deficit = np.maximum(0,min_instances-current)
-        best = max(feasible,key=lambda g:float(np.minimum(features[g],deficit).sum()/sizes[g]))
-        if np.minimum(features[best],deficit).sum() == 0:
-            raise ValueError('Smallest fraction cannot satisfy grouped minimum class coverage')
+        def coverage(g):
+            return float(np.minimum(features[g],deficit).sum()/sizes[g])
+        useful = sorted((g for g in feasible if coverage(g) > 0),key=lambda g:-coverage(g))
+        if not useful: raise ValueError('Smallest fraction cannot satisfy grouped minimum class coverage')
+        best = choose(useful)
         selected.append(best); n += sizes[best]; current += features[best]
     subsets = {}
     for fraction in sorted(fractions):
@@ -77,7 +85,7 @@ def nested_subsets(records, fractions, seed, n_classes, min_instances=5):
             def score(g):
                 return float(np.square((current+features[g]-desired)/np.maximum(desired,1)).sum()
                              + ((n+sizes[g]-target)/target)**2)
-            best = min(eligible,key=score)
+            best = choose(sorted(eligible,key=score))
             selected.append(best); n += sizes[best]; current += features[best]
         rows = sorted([r for g in selected for r in groups[g]],key=lambda r:r['export_stem'])
         subsets[str(fraction)] = {'fraction':fraction,'seed':seed,'requested_images':target,

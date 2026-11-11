@@ -57,6 +57,20 @@ class HQGANModelTests(unittest.TestCase):
         a(x).mean().backward()
         self.assertTrue(torch.isfinite(x.grad).all())
 
+    def test_diffusion_noise_enters_before_any_trained_layer(self):
+        d = Discriminator(width=1/32, ahd={'initial_steps': 500.0})
+        x = torch.rand(4,3,64,64)*2-1
+        torch.manual_seed(3); noisy = d(x)
+        torch.manual_seed(3); same = d(d.ahd(x), diffuse=False)
+        # The image is the only place noise is added, so trained layers cannot outgrow or out-vote it.
+        torch.testing.assert_close(noisy, same, rtol=0, atol=0)
+        self.assertFalse(torch.allclose(noisy, d(x, diffuse=False)))
+        # At horizon 1 the image is almost untouched; at the maximum it is mostly noise.
+        d.ahd.horizon.fill_(1.0)
+        self.assertLess(float((d.ahd(x)-x).abs().max()), 0.1)
+        d.ahd.horizon.fill_(500.0)
+        self.assertGreater(float((d.ahd(x)-x).std()), 0.4)
+
     def test_gan_update_changes_generator_and_discriminator(self):
         for resolution in (64,128):
             with self.subTest(resolution=resolution):

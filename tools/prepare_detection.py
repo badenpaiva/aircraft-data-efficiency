@@ -80,6 +80,21 @@ class UnionFind:
         if a != b: self.parent[max(a,b)] = min(a,b)
 
 
+def capture_unit(name, patterns):
+    """Capture sequence (one video or photo series) named by a source's configured patterns.
+
+    Frames of one sequence show the same physical defects, so they must share a split.
+    A configured source fails on an unmatched name instead of leaving it ungrouped.
+    """
+    if not patterns: return None
+    for index, pattern in enumerate(patterns):
+        if 'unit' not in re.compile(pattern).groupindex:
+            raise ValueError('capture_unit_patterns entries need a named group "unit"')
+        match = re.match(pattern, name)
+        if match: return f'{index}:{match.group("unit")}'
+    raise ValueError(f'No capture_unit_patterns entry matches {name}')
+
+
 def group_records(records, threshold):
     """Group similarities; do not delete near duplicates. Include quarantined bridges."""
     uf = UnionFind(len(records)); keys = {}
@@ -91,6 +106,7 @@ def group_records(records, threshold):
         if family: group_keys.append(('numeric_family', r['source'], family[1]))
         if '.rf.' in Path(r['image']).stem: group_keys.append(('rf_base', r['source'], stem))
         if r.get('additional_group'): group_keys.append(('reviewer_group', r['additional_group']))
+        if r.get('capture_unit'): group_keys.append(('capture_unit', r['source'], r['capture_unit']))
         for key in group_keys:
             if key in keys: uf.union(i, keys[key])
             else: keys[key] = i
@@ -171,7 +187,8 @@ def scan_coco(root, source, spec, targets, decisions, require_review):
                  'schema_sha256': schema_hash, 'class_order': categories,
                  'class_order_evidence': 'coco_category_ids', 'annotations': [],
                  'issues': [], 'phash': None, 'duplicate_rows_removed': 0,
-                 'empty_label': not by_image[im['id']]}
+                 'empty_label': not by_image[im['id']],
+                 'capture_unit': capture_unit(im['file_name'], spec.get('capture_unit_patterns'))}
             width, height = im['width'], im['height']
             if width <= 0 or height <= 0:
                 raise ValueError(f'Invalid COCO dimensions: {rel}')
@@ -336,6 +353,7 @@ def scan(root, config, output, reviews=None, d4_order=None, overrides=None):
     summary={'sources':{},'target_names':target_names,'status_counts':dict(Counter(r['status'] for r in records)),
              'prior_review_ledger_found':prior_path.is_file(), 'manual_review_required':require_review,
              'similarity_groups':len(groups),'cross_source_groups':sum(len({r['source'] for r in g})>1 for g in groups),
+             'capture_units':len({(r['source'],r['capture_unit']) for r in records if r.get('capture_unit')}),
              'orphan_labels':orphan_labels,'warning':'Candidate labels are not an approved dataset. Similarity groups are conservative, not verified duplicates.',
              'duplicate_rows_removed':sum(r['duplicate_rows_removed'] for r in records),'threshold':threshold}
     for did in source_ids:

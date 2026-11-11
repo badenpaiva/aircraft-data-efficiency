@@ -1,4 +1,4 @@
-# Active SUTD v4. Provisional labels; related images grouped before 70/10/20 re-split.
+# Active SUTD v4. Provisional labels; whole capture units (videos, photo series) grouped before 70/10/20 re-split.
 project:
   name: aircraft-data-efficiency
   version: 0.1.0
@@ -37,6 +37,11 @@ datasets:
       provenance: https://universe.roboflow.com/sutd-4mhea/aircraft_ai1; exported
         2024-04-06; 640x640 stretch; no export augmentation
       n_images: 983
+      # One unit per drone video (scene/sceneadd + number; frame = last five digits)
+      # or photo series (suffix after the image number). A unit never crosses splits.
+      capture_unit_patterns:
+      - '^(?P<unit>(?:sceneadd|scene)\d+?)\d{5}(?:-Copy)?_jpg'
+      - '^image-\d+(?P<unit>(?:-\d+)*)-?_jpg'
       class_map:
         missing-rivet: missing-rivet
         rust: rust
@@ -53,7 +58,7 @@ dedup:
   hamming_threshold: 5
 training:
   model: yolov8n.pt
-  data: data/processed/sutd_v4/dataset/data.yaml
+  data: data/processed/sutd_v4_units/dataset/data.yaml
   project: results/detection
   name: sutd_v4_baseline
   image_size: 640

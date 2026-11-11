@@ -6,19 +6,19 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
 import yaml
-from detection_pipeline import resolve, load_config
+from detection_pipeline import resolve, load_config, torch_device
 from augmentation.hqgan.training import PatchDataset, train
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--patches', default='data/interim/sutd_v4_gan_patches')
+    p.add_argument('--patches', default='data/interim/sutd_v4_units_gan_patches')
     p.add_argument('--config', default='config/hqgan_sutd.yaml')
     p.add_argument('--experiment', default='config/experiment.yaml')
     p.add_argument('--class-name', required=True)
     p.add_argument('--steps', type=int, help='Explicit bounded number of optimizer steps')
     p.add_argument('--smoke', action='store_true', help='Two steps, batch two, 64px, 1/32 channel widths')
-    p.add_argument('--device', default='cpu', help='cpu or cuda:0')
+    p.add_argument('--device', default='auto', help='auto (a CUDA GPU if PyTorch can use one, else the CPU), cpu, or cuda:0; a resumed run must use the device it started on')
     p.add_argument('--name')
     p.add_argument('--resume', action='store_true', help='Resume the named run with identical total steps and settings')
     args = p.parse_args(argv)
@@ -35,8 +35,11 @@ def main(argv=None):
     if output.exists() and not args.resume:
         p.error(f'Output already exists: {output}')
     print('Checking training patches and dataset provenance...', flush=True)
-    dataset = PatchDataset(resolve(args.patches), args.class_name, settings['resolution'], load_config(args.experiment))
-    train(dataset, settings, output, 2 if args.smoke else args.steps, args.device, args.smoke,args.resume)
+    dataset = PatchDataset(resolve(args.patches), args.class_name, settings['resolution'], load_config(args.experiment),
+                           settings['crop'])
+    device = torch_device(args.device)
+    print(f'Training on {device}.', flush=True)
+    train(dataset, settings, output, 2 if args.smoke else args.steps, device, args.smoke,args.resume)
     print(f'Completed: {output}')
 
 

@@ -123,7 +123,14 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    """Four FPN branches and 64 logits (Fig. 4); learned FPN is an explicit assumption."""
+    """Four FPN branches and 64 logits (Fig. 4); learned FPN is an explicit assumption.
+
+    The adaptive diffusion is applied to the input image, not to the pyramid features as in
+    the paper. The paper's pyramid is a fixed feature network; this one is trained with the
+    heads, so it can settle real-versus-fake before any feature noise is added and repeat the
+    answer across thousands of feature values. Measured: with feature noise at the maximum
+    horizon it still memorised its training images (docs/hqgan.md); with image noise it could not.
+    """
     def __init__(self, width=1.0, ahd=None):
         super().__init__()
         c = {128:channels(width,64), 64:channels(width,64), 32:channels(width,128),
@@ -144,6 +151,8 @@ class Discriminator(nn.Module):
         self.ahd = AHD(**(ahd or {}))
 
     def forward(self, images, diffuse=True):
+        if diffuse:
+            images = self.ahd(images)
         # Fig. 4 uses a 128px pyramid even when the generator produces 64px crops.
         x = F.interpolate(images, size=(128,128), mode='bilinear', align_corners=False)
         bottom = {64:F.leaky_relu(self.stem(x),0.2)}
@@ -153,8 +162,7 @@ class Discriminator(nn.Module):
         for r in (16,32,64):
             top[r] = bottom[r] + F.interpolate(self.lateral[str(r)](top[r//2]), size=(r,r), mode='nearest')
         top[128] = self.full(F.interpolate(top[64], size=(128,128), mode='nearest'))
-        return torch.cat([head(self.ahd(top[int(r)]) if diffuse else top[int(r)]).flatten(1)
-                          for r,head in self.heads.items()], dim=1)
+        return torch.cat([head(top[int(r)]).flatten(1) for r,head in self.heads.items()], dim=1)
 
 
 def discriminator_loss(real, fake):

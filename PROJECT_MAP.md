@@ -31,17 +31,19 @@ The project uses SUTD aircraft_AI1 v4. Start with [README](README.md) for the ex
 
 ## Active experiment folders
 
+The two folders below are the completed first experiment. They are records: the current code cannot resume or re-report them. A new study made with the [pipeline guide](docs/pipeline.md) has the same layout.
+
 `results/studies/sutd_full_v1/` is the source study:
 
 - `plan.json`: frozen settings, dataset identities, subsets and planned jobs.
 - `subsets/<subset>/`: real training-image selections and manifests.
 - `gan/<subset>/patches/`: subset-bound real training crops.
-- `gan/<subset>/<class>/training/`: GAN checkpoint and training records.
+- `gan/<subset>/<class>/training/`: GAN checkpoint and training records. Runs made with GAN method `v2` also hold `sheets/`, one image of samples per checkpoint.
 - `gan/<subset>/<class>/candidates/`: generated patches.
 - `gan/<subset>/candidates_review.json` and `candidates_screening/`: screening outcomes and image-review queue.
 - `cvat/` and placement/composite review files: created when the review workflow is used.
 
-`results/studies/sutd_whole_patch_seed0_v1/` is the current detector study:
+`results/studies/sutd_whole_patch_seed0_v1/` is its detector study:
 
 - `plan.json`: derived seed-0 experiment and whole-patch labeling provenance.
 - `whole_patch/<subset>/images/`, `labels/`, `manifest.json`: generated composite training data and approximate boxes.

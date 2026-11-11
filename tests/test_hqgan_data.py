@@ -6,10 +6,11 @@ import sys
 import tempfile
 import unittest
 
+import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from augmentation.hqgan.data import pixel_box, prepare_patches, selected_rows
+from augmentation.hqgan.data import context_patch, crop_settings, pixel_box, prepare_patches, selected_rows
 from detection_pipeline import sha256
 import test_detection_pipeline
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
@@ -38,6 +39,71 @@ class HQGANDataTests(unittest.TestCase):
             (export/records[0]['patch']).write_bytes(b'changed')
             with self.assertRaisesRegex(ValueError, 'content changed'):
                 PatchDataset(export,class_name,64,config)
+
+    def test_crop_rule_margin_mirrored_context_and_quarter_turn(self):
+        source = np.random.default_rng(1).integers(0, 256, (40, 30, 3), dtype=np.uint8)  # 30 wide, 40 high
+        rgb = Image.fromarray(source)
+        rule = crop_settings({'margin': .25, 'min_box_side': 4, 'canonical_orientation': True})
+        # Wide box inside the photograph: the window is the box plus a quarter of each side.
+        patch, window, turned = context_patch(rgb, (8, 16, 20, 24), rule)
+        self.assertEqual((window, turned, patch.size), ([5, 14, 23, 26], False, (18, 12)))
+        np.testing.assert_array_equal(np.asarray(patch), source[14:26, 5:23])
+        # Tall box: stored long side horizontal; the paste's clockwise turn restores it exactly.
+        patch, window, turned = context_patch(rgb, (10, 8, 16, 28), rule)
+        self.assertEqual((window, turned, patch.size), ([8, 3, 18, 33], True, (30, 10)))
+        np.testing.assert_array_equal(np.rot90(np.asarray(patch), -1), source[3:33, 8:18])
+        # Box in the corner: the patch keeps its size and the missing context is a mirror image.
+        patch, window, turned = context_patch(rgb, (0, 0, 12, 8), rule)
+        self.assertEqual((window, patch.size), ([-3, -2, 15, 10], (18, 12)))
+        pixels = np.asarray(patch)
+        np.testing.assert_array_equal(pixels[2:, 3:], source[0:10, 0:15])
+        np.testing.assert_array_equal(pixels[0, 3:], source[2, 0:15])
+        np.testing.assert_array_equal(pixels[2:, 0], source[0:10, 3])
+        # The same rule without the orientation step leaves the tall box upright.
+        upright = crop_settings({'margin': .25, 'min_box_side': 4})
+        self.assertEqual(context_patch(rgb, (10, 8, 16, 28), upright)[0].size, (10, 30))
+        # Defaults are the first study's crops: the box exactly as annotated.
+        self.assertEqual(crop_settings(), {'margin': 0.0, 'min_box_side': 8, 'canonical_orientation': False})
+        patch, window, turned = context_patch(rgb, (10, 8, 16, 28), crop_settings())
+        self.assertEqual((window, turned, patch.size), ([10, 8, 16, 28], False, (6, 20)))
+        for bad in ({'margin': .6}, {'margin': True}, {'margin': -.1}, {'min_box_side': 0},
+                    {'canonical_orientation': 1}, {'unknown': 1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                crop_settings(bad)
+
+    def test_export_records_the_crop_rule_and_the_loader_enforces_it(self):
+        from augmentation.hqgan.training import PatchDataset
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config, data = test_detection_pipeline.DetectionTests().fixture(root)
+            rule = {'margin': .25, 'min_box_side': 1, 'canonical_orientation': True}
+            report = prepare_patches(data, config, root / 'context', crop=rule)
+            self.assertEqual(report['crop'], crop_settings(rule))
+            records = json.loads((root / 'context/patches.json').read_text())
+            for record in records:
+                x1, y1, x2, y2 = record['pixel_box_xyxy']
+                wx1, wy1, wx2, wy2 = record['crop_window_xyxy']
+                self.assertEqual((wx1, wy1, wx2, wy2), (x1 - 2, y1 - 2, x2 + 2, y2 + 2))  # 8 px boxes
+                self.assertFalse(record['quarter_turn'])
+                with Image.open(root / 'context' / record['patch']) as image:
+                    self.assertEqual(image.size, (wx2 - wx1, wy2 - wy1))
+            name = records[0]['class_name']
+            loader = PatchDataset(root / 'context', name, 64, config, rule)
+            self.assertEqual(loader.identity['crop'], crop_settings(rule))
+            with self.assertRaisesRegex(ValueError, 'different crop rule'):
+                PatchDataset(root / 'context', name, 64, config, {**rule, 'margin': 0.0})
+            # A minimum side larger than the fixture's boxes leaves nothing to train on.
+            with self.assertRaisesRegex(ValueError, 'lacks usable'):
+                prepare_patches(data, config, root / 'strict', crop={**rule, 'min_box_side': 9})
+            # An export from before the rule was recorded holds tight boxes.
+            prepare_patches(data, config, root / 'first', min_side=1)
+            manifest = json.loads((root / 'first/manifest.json').read_text())
+            del manifest['crop']
+            (root / 'first/manifest.json').write_text(json.dumps(manifest))
+            tight = {'margin': 0.0, 'min_box_side': 1, 'canonical_orientation': False}
+            self.assertEqual(PatchDataset(root / 'first', name, 64, config, tight).identity['crop'], tight)
+            with self.assertRaisesRegex(ValueError, 'different crop rule'):
+                PatchDataset(root / 'first', name, 64, config, rule)
 
     def test_null_subset_cannot_silently_use_full_training_pool(self):
         with tempfile.TemporaryDirectory() as tmp:

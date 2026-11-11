@@ -5,16 +5,28 @@ The project uses **SUTD aircraft_AI1 v4**, exported in COCO format from [aircraf
 | Item | Location or value |
 |---|---|
 | Raw source | `data/raw/aircraft_AI1.v4-983-images-70-20-10-ratio-without-augmentation.coco` |
-| Prepared export | `data/processed/sutd_v4` |
-| Detector dataset YAML | `data/processed/sutd_v4/dataset/data.yaml` |
+| Prepared export | `data/processed/sutd_v4_units` (capture-unit split, active). `data/processed/sutd_v4` is the earlier similarity-only split used by the completed studies; keep it. |
+| Detector dataset YAML | `data/processed/sutd_v4_units/dataset/data.yaml` |
 | Full-pool diagnostic GAN patches | `data/interim/sutd_v4_gan_patches` |
 | Dataset configuration | `config/experiment.yaml` |
 | Classes | `missing-rivet`, `rust`, `scratch` |
 | Included data | 983 images and 5,515 boxes, provisionally accepted |
-| Grouping | 825 similarity groups before splitting |
-| Prepared split | 688 training, 98 validation, 197 test images |
+| Grouping | 41 capture units (34 drone videos, 7 photo series), 38 groups after similarity merging |
+| Prepared split | 683 training, 106 validation, 194 test images |
 
-The source spelling `scractch` is normalized to `scratch`. The prepared split is regenerated at approximately 70/10/20; it does not retain the source export's memberships. Similarity groups stay together, but image similarity is not a guarantee that every shared physical defect has been identified. Source stretching cannot be undone by detector letterboxing.
+The source spelling `scractch` is normalized to `scratch`. The prepared split is regenerated at approximately 70/10/20; it does not retain the source export's memberships. Source stretching cannot be undone by detector letterboxing.
+
+## Capture units
+
+The images are frames sampled every 20 frames from drone videos, plus numbered photo series. Consecutive frames show the same physical defects, and perceptual hashing alone kept only 21% of them together, so the earlier split put near-identical views on both sides. `capture_unit_patterns` in `config/experiment.yaml` now names each image's video or photo series from its file name, and a whole unit stays in one split. Similarity merging still applies on top: four photo series share near-identical images and form one 233-image group.
+
+- `scene7` and `sceneadd7` are different videos and are separate units.
+- A configured source fails on a file name that matches no pattern, so a new naming scheme cannot slip in ungrouped.
+- In the active export no capture unit crosses splits, and no cross-split image pair is within the similarity threshold.
+
+All footage is of one parked aircraft, and different videos pass over the same regions. A unit split removes near-identical frames from evaluation; it cannot make validation and test defects physically new. Class balance is uneven because videos differ in content: test has 135 missing-rivet boxes against about 450 for each other class.
+
+Training fractions are drawn as whole groups: 25% is 6 to 8 groups and 50% is 15 to 17, depending on the seed. The sampler picks one of the three best-balancing groups at each step by seed, so each seed gets its own subset with similar class counts. The 233-image photo group is too large for the smaller budgets and only enters at 100%.
 
 ## Import and export
 

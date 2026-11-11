@@ -1,5 +1,7 @@
-"""Exploratory, pass-only HQGAN composites with approximate whole-patch labels.
+"""Exploratory, pass-only HQGAN composites labelled from the crop rule, without human review.
 
+The label is the core of each pasted patch: the part the GAN's training crops filled with the
+annotated box. With no crop margin that is the whole patch.
 Separate entry point preserves the original study's frozen implementation.
 No human approvals are created. Only validation evaluation is exposed.
 """
@@ -12,15 +14,15 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 import cv2
-import numpy as np
 from detection_pipeline import resolve, sha256, write_json
 from study import runner
-from study.augmentation import export_image, propose_placements
+from study.augmentation import export_image, paste_patch, propose_placements
 from study.data import identity
 from study.screening import require_screening
 
-METHOD = 'exploratory_pass_only_whole_patch_v1'
-NOTE = ('Approximate whole-patch boxes; technical-pass candidates only; automatic '
+METHOD = 'exploratory_pass_only_patch_core_v2'
+NOTE = ('Approximate boxes from the crop rule (the core of each pasted patch; the whole patch when '
+        'the crop has no margin); technical-pass candidates only; automatic '
         'non-overlapping placements; no human semantic, placement or composite review. '
         'Validation-only exploratory results, not manually annotated HQGAN results.')
 
@@ -97,19 +99,17 @@ def make_composites(source, output, payload, key):
         bg = backgrounds[placement['background_stem']]
         candidate = candidates[placement['candidate_id']]
         x, y, w, h = placement['rectangle_xywh']
+        cx, cy, cw, ch = placement['core_box_xywh']
         background = cv2.imread(bg['image_path'])
         patch = cv2.imread(candidate['path'])
         if background is None or patch is None:
             raise ValueError('Unreadable blend input')
-        patch = cv2.resize(patch, (w, h))
-        mask = np.full((h, w), 255, dtype=np.uint8)
-        mask[[0, -1], :] = 0
-        mask[:, [0, -1]] = 0
-        blended = cv2.seamlessClone(patch, background, mask, (x + w // 2, y + h // 2), cv2.NORMAL_CLONE)
-        box = [candidate['class_id'], x / bg['width'], y / bg['height'],
-               (x + w) / bg['width'], (y + h) / bg['height']]
+        blended = paste_patch(background, patch, placement)
+        box = [candidate['class_id'], cx / bg['width'], cy / bg['height'],
+               (cx + cw) / bg['width'], (cy + ch) / bg['height']]
         provenance = {'method': METHOD, 'quality': NOTE, 'human_reviewed': False,
-                      'defect_box_xyxy': [0, 0, 1, 1], 'candidate': candidate,
+                      'defect_box_xyxy': [(cx - x) / w, (cy - y) / h, (cx + cw - x) / w, (cy + ch - y) / h],
+                      'candidate': candidate,
                       'placement': placement, 'study_subset_identity': subset['identity']}
         stem = 'whole_patch_' + identity([inputs, placement])[:24]
         records.append(export_image(directory, stem, blended, bg['targets'] + [box], bg, provenance))
@@ -194,7 +194,7 @@ def main():
     p.add_argument('--seed', type=int, default=0)
     p = commands.add_parser('run')
     p.add_argument('--study', required=True)
-    p.add_argument('--device', default='cpu')
+    p.add_argument('--device', default='auto', help='auto (a CUDA GPU if PyTorch can use one, else the CPU), cpu, or cuda:0')
     p.add_argument('--models', nargs='+')
     p.add_argument('--arms', nargs='+')
     p.add_argument('--limit-jobs', type=int)

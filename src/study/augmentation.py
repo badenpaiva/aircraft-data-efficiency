@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from detection_pipeline import sha256, write_json
+from augmentation.hqgan.data import crop_settings, margin_pixels
 from .data import identity,target_label
 from .metrics import iou
 from .screening import require_screening
@@ -76,26 +77,54 @@ def validate_candidates(samples, subset_identity, allow_smoke=False):
     return approved
 
 
+def paste_patch(background, patch, placement):
+    """Poisson-blend a generated patch into its rectangle, undoing the crop's quarter turn."""
+    x,y,w,h = placement['rectangle_xywh']
+    if placement.get('quarter_turn'): patch = np.ascontiguousarray(np.rot90(patch,-1))  # clockwise
+    patch = cv2.resize(patch,(w,h))
+    mask = np.full((h,w),255,dtype=np.uint8); mask[[0,-1],:]=0; mask[:,[0,-1]]=0
+    return cv2.seamlessClone(patch,background,mask,(x+w//2,y+h//2),cv2.NORMAL_CLONE)
+
+
+def turned_box(box, quarter_turn):
+    """A box drawn on the upright generated patch, as it lies after paste_patch's quarter turn."""
+    x1,y1,x2,y2 = box
+    return [1-y2,x1,1-y1,x2] if quarter_turn else [x1,y1,x2,y2]
+
+
 def propose_placements(records, candidates, count, seed):
-    """Nonoverlapping proposals; a person still confirms appropriate aircraft locations."""
+    """Nonoverlapping proposals; a person still confirms appropriate aircraft locations.
+
+    The rectangle mirrors the crop rule of the GAN that made the candidate: a real box of the
+    class supplies the core, the crop margin is added around it, and a tall core means the
+    patch is turned back from its long-side-horizontal training orientation.
+    """
     rng = np.random.default_rng(seed); values = list(candidates.values()); proposals = []
     for index in range(count):
         sample = values[index%len(values)]
+        rule = crop_settings((sample.get('gan_identity') or {}).get('crop'))
         found = None
         for _ in range(500):
             background = records[int(rng.integers(len(records)))]
+            width,height = background['width'],background['height']
             # Match a real training defect's relative dimensions, not arbitrary inference.
             boxes = [t for r in records for t in r['targets'] if t[0]==sample['class_id']]
             if not boxes: raise ValueError('No size exemplars for generated class')
             _,x1,y1,x2,y2 = boxes[int(rng.integers(len(boxes)))]
-            w = max(8,min(background['width']-4,round((x2-x1)*background['width'])))
-            h = max(8,min(background['height']-4,round((y2-y1)*background['height'])))
-            x = int(rng.integers(2,background['width']-w-1)); y = int(rng.integers(2,background['height']-h-1))
-            bounds = [x/background['width'],y/background['height'],(x+w)/background['width'],(y+h)/background['height']]
+            w = max(8,min(width-4,round((x2-x1)*width)))
+            h = max(8,min(height-4,round((y2-y1)*height)))
+            px,py = margin_pixels(w,rule['margin']),margin_pixels(h,rule['margin'])
+            if w+2*px > width-4: w = width-4-2*px; px = margin_pixels(w,rule['margin'])
+            if h+2*py > height-4: h = height-4-2*py; py = margin_pixels(h,rule['margin'])
+            rw,rh = w+2*px,h+2*py
+            x = int(rng.integers(2,width-rw-1)); y = int(rng.integers(2,height-rh-1))
+            bounds = [x/width,y/height,(x+rw)/width,(y+rh)/height]
             if all(iou(bounds,t[1:])==0 for t in background['targets']):
                 found = {'id':f'blend_{index:06d}','background_stem':background['export_stem'],
                     'background_sha256':background['image_sha256'],'candidate_id':sample['id'],
-                    'rectangle_xywh':[x,y,w,h],'approved':False,'reviewer':'','placement_valid':False}
+                    'rectangle_xywh':[x,y,rw,rh],'core_box_xywh':[x+px,y+py,w,h],
+                    'quarter_turn':bool(rule['canonical_orientation'] and h > w),
+                    'approved':False,'reviewer':'','placement_valid':False}
                 break
         if found is None: raise ReviewRequired('Cannot propose a nonoverlapping placement; supply a reviewed placement manually')
         proposals.append(found)
@@ -129,10 +158,9 @@ def blend(records, candidate_file, placement_file, subset_identity, output, allo
     for p in valid:
         bg=backgrounds[p['background_stem']]; sample=candidates[p['candidate_id']]
         background=cv2.imread(bg['image_path']); source=cv2.imread(sample['path'])
-        x,y,w,h=p['rectangle_xywh']; source=cv2.resize(source,(w,h))
-        mask=np.full((h,w),255,dtype=np.uint8); mask[[0,-1],:]=0; mask[:,[0,-1]]=0
-        out=cv2.seamlessClone(source,background,mask,(x+w//2,y+h//2),cv2.NORMAL_CLONE)
-        bx1,by1,bx2,by2=sample['defect_box_xyxy']
+        x,y,w,h=p['rectangle_xywh']
+        out=paste_patch(background,source,p)
+        bx1,by1,bx2,by2=turned_box(sample['defect_box_xyxy'],p.get('quarter_turn',False))
         new=[sample['class_id'],(x+bx1*w)/bg['width'],(y+by1*h)/bg['height'],
              (x+bx2*w)/bg['width'],(y+by2*h)/bg['height']]
         provenance={'method':'hqgan_poisson','candidate':sample,'placement':p,

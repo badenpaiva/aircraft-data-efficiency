@@ -4,27 +4,20 @@ fractions:
 - 1.0
 - 0.5
 - 0.25
-- 0.1
-- 0.05
 seeds:
 - 0
 - 1
 - 2
 min_instances_per_class: 5
+# One light and one heavy detector from the same family, so capacity is the only difference:
+# YOLO26n has 2.6M parameters (6 GFLOPs at 640 px), YOLO26m 21.9M (75 GFLOPs).
 models:
-  yolox:
-    backend: yolox
-    architecture: yolox-s
-    weights: .ultralytics/weights/yolox_s.pth
-  yolov8:
-    backend: ultralytics
-    weights: yolov8n.pt
-  yolo11:
-    backend: ultralytics
-    weights: yolo11n.pt
-  yolo26:
+  yolo26n:
     backend: ultralytics
     weights: yolo26n.pt
+  yolo26m:
+    backend: ultralytics
+    weights: yolo26m.pt
 arms:
   baseline:
     kind: baseline
@@ -53,8 +46,10 @@ training:
   epochs: 30
   image_size: 640
   batch_size: 8
-  workers: 0
+  workers: 4
   cpu_threads: 2
+  # Mixed precision on GPUs that pass the library's check; ignored on the CPU.
+  amp: true
   learning_rate: 0.001
   optimizer: AdamW
   patience: 0
@@ -83,6 +78,7 @@ screening:
   min_gray_std: 5.0
   min_laplacian_variance: 15.0
   near_duplicate_hamming: 2
+# Only used when a model above has backend: yolox (none does at present).
 yolox:
   repository: .ultralytics/vendor/YOLOX
   commit: 6ddff4824372906469a7fae2dc3206c7aa4bbaee

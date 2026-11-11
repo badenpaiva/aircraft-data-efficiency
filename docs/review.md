@@ -2,7 +2,7 @@
 
 ## Current policy
 
-The current SUTD run uses only candidates whose technical screening outcome is `pass`. It assigns `[0, 0, 1, 1]` as the candidate box, automatically proposes non-overlapping placements on real subset images, and transforms the whole-patch box into the composite. Original image labels are retained. No human approvals are created, and final composites are not semantically reviewed. These are approximate training labels.
+The automatic SUTD pipeline uses only candidates whose technical screening outcome is `pass`. It proposes non-overlapping placements on real subset images and labels each pasted patch by its core: the part that the GAN's training crops filled with the annotated box (see [HQGAN design](hqgan.md#crops-placement-and-labels)). With the current crop margin the core is the central 80% of the patch; the completed first run had no margin, so its label was the whole patch, `[0, 0, 1, 1]`. Original image labels are retained. No human approvals are created, and final composites are not semantically reviewed. These are approximate training labels.
 
 `pass` checks image integrity, dimensions, contrast, detail and duplication. It does not certify that the defect is present, the class is correct or the box is tight. `needs_review` candidates are excluded by the current whole-patch entry point. `reject` candidates cannot be approved by the reviewed workflow.
 
@@ -10,24 +10,24 @@ The current SUTD run uses only candidates whose technical screening outcome is `
 
 The supported review workflow changes candidate selection and annotations while retaining the SUTD preparation, subset-bound GANs, blending, detector training and evaluation pipeline. Review a candidate's defect/class and tight box, inspect placement, then inspect the blended image and all labels. CVAT exchanges below provide those decisions without typing normalized coordinates.
 
-Use the source study's review queues, not the current derived whole-patch manifests. The `whole_patch_study.py` entry point always creates whole-patch labels even if a queue has human boxes; reviewed composites are consumed by `detection_study.py run`. Do not modify inputs of completed detector runs. Existing source candidate queues can be reviewed without retraining their GANs if their provenance remains valid.
+Use the source study's review queues, not the current derived whole-patch manifests. The `whole_patch_study.py` entry point always creates crop-rule labels even if a queue has human boxes; reviewed composites are consumed by `detection_study.py run`. Generated patches are stored with their long side horizontal. Draw the box on the patch as shown; a placement on a tall real box turns the patch and its box a quarter turn automatically. Do not modify inputs of completed detector runs. Existing source candidate queues can be reviewed without retraining their GANs if their provenance remains valid.
 
 After candidate review for a subset:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/detection_study.py propose-placements --study results/studies/sutd_full_v1 --subset seed0_f00500
+.\.venv\Scripts\python.exe scripts/detection_study.py propose-placements --study results/studies/sutd_units_v2 --subset seed0_f02500
 ```
 
 After placement review:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/detection_study.py blend --study results/studies/sutd_full_v1 --subset seed0_f00500
+.\.venv\Scripts\python.exe scripts/detection_study.py blend --study results/studies/sutd_units_v2 --subset seed0_f02500
 ```
 
 After final composite review:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts/detection_study.py run --study results/studies/sutd_full_v1 --arms hqgan_0p5 hqgan_1p0 hqgan_2p0 --device cpu
+.\.venv\Scripts\python.exe scripts/detection_study.py run --study results/studies/sutd_units_v2 --arms hqgan_0p5 hqgan_1p0 hqgan_2p0
 ```
 
 Repeat review for each intended subset. The run command checks all planned seeds/fractions; subsets without sufficient reviewed composites remain blocked. Placements currently number exactly the largest ratio's quota, so rejected placements/composites can leave that ratio short. There is no automatic replacement round. Do not assume whole-patch and reviewed results are interchangeable.
@@ -42,7 +42,7 @@ First run the `gan` command from the [pipeline guide](pipeline.md). New candidat
 automatically. Then, from the repository root in PowerShell:
 
 ```powershell
-$studyPath = 'results/studies/sutd_full_v1'
+$studyPath = 'results/studies/sutd_units_v2'
 $subsetKey = 'seed0_f10000'
 $packagePath = "$studyPath/cvat/$subsetKey/candidates_batch01"
 

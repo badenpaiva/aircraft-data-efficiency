@@ -10,12 +10,20 @@ from PIL import Image,ImageDraw
 
 from detection_pipeline import resolve,sha256,write_json
 from augmentation.hqgan.data import prepare_patches
-from augmentation.hqgan.training import PatchDataset,train,save_samples
-from augmentation.hqgan.model import Generator
+from augmentation.hqgan.training import METHOD,PatchDataset,train,save_samples,sampling_generator
 from .runner import load_plan,subset_records
 from .augmentation import validate_candidates,propose_placements,blend
 from .backends import torch_device
 from .screening import scan_bundle, require_screening, item_id
+
+
+def subset_gan_settings(plan,seed):
+    """GAN settings for one subset; smoke plans shrink the model and accept the fixtures' small boxes."""
+    settings=copy.deepcopy(plan['gan_settings']); settings['seed']=seed
+    if plan['smoke']:
+        settings.update(resolution=64,width=1/32,batch_size=2,checkpoint_every=1)
+        settings['crop']={**settings['crop'],'min_box_side':8}
+    return settings
 
 
 def train_gans(directory,device='auto',subset=None,limit=None):
@@ -28,14 +36,13 @@ def train_gans(directory,device='auto',subset=None,limit=None):
         patch_dir=root/'patches'
         print(f'GAN subset {key}: preparing/checking training patches...',flush=True)
         if not (patch_dir/'manifest.json').exists():
-            prepare_patches(plan['source_data'],plan['experiment'],patch_dir,s['stems'])
+            prepare_patches(plan['source_data'],plan['experiment'],patch_dir,s['stems'],
+                            crop=subset_gan_settings(plan,s['seed'])['crop'])
         candidates=[]; checkpoints=[]
         for cid,name in enumerate(plan['names']):
             print(f'GAN subset {key}: class {cid+1}/{len(plan["names"])} ({name})',flush=True)
-            settings=copy.deepcopy(plan['gan_settings'])
-            settings['seed']=s['seed']
-            if plan['smoke']: settings.update(resolution=64,width=1/32,batch_size=2,checkpoint_every=1)
-            dataset=PatchDataset(patch_dir,name,settings['resolution'],plan['experiment'])
+            settings=subset_gan_settings(plan,s['seed'])
+            dataset=PatchDataset(patch_dir,name,settings['resolution'],plan['experiment'],settings['crop'])
             output=root/name/'training'; ckpt=output/'last.pt'
             completion=output/'completion.json'
             imports=json.loads((root/'imports.json').read_text()) if (root/'imports.json').exists() else {}
@@ -50,7 +57,7 @@ def train_gans(directory,device='auto',subset=None,limit=None):
             sample_dir=root/name/'candidates'
             if not (sample_dir/'samples.json').exists():
                 sample_dir.mkdir(parents=True,exist_ok=True)
-                g=Generator(**checkpoint['architecture']).to(device); g.load_state_dict(checkpoint['generator'])
+                g=sampling_generator(checkpoint,device)
                 images=save_samples(g,sample_dir,plan['config']['gan']['candidates_per_class'],s['seed']+1000,device)
                 write_json(sample_dir/'samples.json',images)
             for i,row in enumerate(json.loads((sample_dir/'samples.json').read_text())):
@@ -163,16 +170,15 @@ def import_checkpoint(directory,key,checkpoint_path):
     directory=resolve(directory); plan=load_plan(directory); s=plan['subsets'][key]
     checkpoint_path=resolve(checkpoint_path)
     ckpt=torch.load(checkpoint_path,map_location='cpu',weights_only=True)
-    if ckpt.get('method')!='hqgan_paper_guided_reconstruction_v1' or ckpt['smoke']!=plan['smoke']:
+    if ckpt.get('method')!=METHOD or ckpt['smoke']!=plan['smoke']:
         raise ValueError('Incompatible GAN method or smoke status')
-    settings=copy.deepcopy(plan['gan_settings']); settings['seed']=s['seed']
-    if plan['smoke']: settings.update(resolution=64,width=1/32,batch_size=2,checkpoint_every=1)
+    settings=subset_gan_settings(plan,s['seed'])
     if ckpt['settings']!=settings or ckpt['step']!=plan['config']['gan']['steps']:
         raise ValueError('GAN settings/budget do not match plan; set the pilot budget when creating the plan')
     root=directory/'gan'/key; root.mkdir(parents=True,exist_ok=True); patches=root/'patches'
     if not (patches/'manifest.json').exists():
-        prepare_patches(plan['source_data'],plan['experiment'],patches,s['stems'])
-    dataset=PatchDataset(patches,ckpt['identity']['class_name'],settings['resolution'],plan['experiment'])
+        prepare_patches(plan['source_data'],plan['experiment'],patches,s['stems'],crop=settings['crop'])
+    dataset=PatchDataset(patches,ckpt['identity']['class_name'],settings['resolution'],plan['experiment'],settings['crop'])
     if ckpt['identity']!=dataset.identity:
         raise ValueError('GAN was trained on different real data; importing would invalidate the scarcity comparison')
     file=root/'imports.json'; imports=json.loads(file.read_text()) if file.exists() else {}

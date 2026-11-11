@@ -96,6 +96,30 @@ def device_name(requested):
     return ('0' if torch.cuda.is_available() else 'cpu') if requested == 'auto' else requested
 
 
+def torch_device(device):
+    """A torch device string; 'auto' is the first CUDA GPU when this PyTorch build can use one."""
+    import torch
+    if device in (None, 'auto'):
+        return 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    if str(device).isdigit():
+        return 'cuda:' + str(device)
+    return str(device)
+
+
+def describe_device():
+    """One line for setup and logs: which device runs will use, and why not a GPU if not."""
+    import shutil
+    import torch
+    if torch.cuda.is_available():
+        gpu = torch.cuda.get_device_properties(0)
+        return (f'GPU ready: {gpu.name}, {gpu.total_memory/2**30:.1f} GB, PyTorch {torch.__version__}. '
+                'Runs use it by default (--device auto).')
+    reason = ('this PyTorch is the CPU-only build' if '+cpu' in torch.__version__
+              else 'this PyTorch build cannot use it' if shutil.which('nvidia-smi') else 'no NVIDIA GPU was found')
+    return (f'No usable GPU: {reason} (PyTorch {torch.__version__}). Runs will use the CPU. '
+            'For a GPU, install the CUDA build of PyTorch; see docs/pipeline.md.')
+
+
 def versions():
     return {'python': platform.python_version(), **{name: importlib.metadata.version(name)
             for name in ('ultralytics','torch','torchvision','numpy','Pillow')}}
@@ -109,7 +133,7 @@ def training_args(config, data, output, device, epochs=None, batch=None, imgsz=N
                 seed=config['seeds'][0] if seed is None else seed,
                 deterministic=config['compute']['deterministic'], patience=train['patience'],
                 optimizer=train['optimizer'], lr0=train['learning_rate'],
-                cache=False, amp=False, plots=True, val=True, save=True,
+                cache=False, amp=bool(train.get('amp', False)), plots=True, val=True, save=True,
                 close_mosaic=0, **train['augmentation'])
 
 

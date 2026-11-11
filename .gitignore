@@ -27,3 +27,8 @@ results/**/*
 .test-tmp/
 tmp/
 *.cache
+
+# Claude Code skills/plugins and their generated files (Graphify, Ponytail)
+.claude/
+/CLAUDE.md
+graphify-out/

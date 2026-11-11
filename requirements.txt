@@ -1,6 +1,9 @@
 # Python 3.10+; dataset preparation and the Ultralytics detection baseline.
-# Install a CUDA-compatible PyTorch build separately when using an NVIDIA GPU.
-# Pinned project dependencies for reproducible CPU execution.
+# On Windows the torch and torchvision pins below install the CPU-only build. For an NVIDIA GPU,
+# install the CUDA build of the same versions afterwards, for example:
+#   pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cu126
+# scripts/setup_detection_study.py then reports whether PyTorch can use the GPU.
+# Pinned project dependencies for reproducible execution.
 numpy==2.2.6
 Pillow==11.3.0
 PyYAML==6.0.2

@@ -10,6 +10,15 @@ adam_betas:
 - 0.5
 - 0.999
 generator_objective: non_saturating
+# Sampled weights are a moving average of the generator (0 samples the current weights).
+ema_decay: 0.999
+# Training crops: the annotated box plus context on every side (fraction of that side),
+# small boxes skipped, tall boxes turned so the long side is horizontal.
+# margin 0, min_box_side 8, canonical_orientation false reproduces the first study's crops.
+crop:
+  margin: 0.125
+  min_box_side: 32
+  canonical_orientation: true
 seed: 0
 cpu_threads: 2
 checkpoint_every: 500

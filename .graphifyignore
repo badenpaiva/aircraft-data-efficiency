@@ -1,0 +1,3 @@
+# Graphify: skip generated result plots (one vision pass each, near-identical)
+results/**/*.png
+results/**/*.svg

@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 from detection_pipeline import check_dataset, sha256, write_json
 from training_progress import Progress
 from .data import crop_settings, selected_rows
-from .model import Generator, Discriminator, discriminator_loss, generator_loss
+from .model import Generator, Discriminator, ProjectedDiscriminator, discriminator_loss, generator_loss
 
 METHOD = 'hqgan_paper_guided_reconstruction_v2'
 
@@ -175,7 +175,13 @@ def train(dataset, settings, output, steps, device, smoke=False, resume=False):
         write_json(output/'run_manifest.json', manifest)
     try:
         g = Generator(**architecture).to(device)
-        d = Discriminator(width=settings['width'], ahd=settings['ahd']).to(device)
+        kind = settings.get('discriminator', 'learned')
+        if kind == 'projected':
+            d = ProjectedDiscriminator(ahd=settings['ahd'], augment=settings.get('diffaugment', ())).to(device)
+        elif kind == 'learned':
+            d = Discriminator(width=settings['width'], ahd=settings['ahd']).to(device)
+        else:
+            raise ValueError(f'Unknown discriminator: {kind}')
         # Sampled weights: an average of the generator's recent states, smoother than any single step.
         ema = copy.deepcopy(g).requires_grad_(False)
         og = torch.optim.Adam(g.parameters(), lr=settings['learning_rate'], betas=tuple(settings['adam_betas']))

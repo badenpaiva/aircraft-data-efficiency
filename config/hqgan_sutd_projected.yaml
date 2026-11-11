@@ -1,0 +1,36 @@
+# Pilot: config/hqgan_sutd.yaml with the Projected-GAN discriminator (frozen pretrained features).
+discriminator: projected
+# DiffAugment on real and fake discriminator inputs, as Projected-GAN trains; without it the
+# first projected pilot learned diagonal hatching from about step 3,000.
+diffaugment: [color, translation, cutout]
+resolution: 64
+latent_dim: 128
+width: 0.25
+hsc_alpha: 1.0
+hsc_magnitude: true
+batch_size: 8
+learning_rate: 0.0002
+adam_betas:
+- 0.5
+- 0.999
+generator_objective: non_saturating
+# Sampled weights are a moving average of the generator (0 samples the current weights).
+ema_decay: 0.999
+# Training crops: the annotated box plus context on every side (fraction of that side),
+# small boxes skipped, tall boxes turned so the long side is horizontal.
+# margin 0, min_box_side 8, canonical_orientation false reproduces the first study's crops.
+crop:
+  margin: 0.125
+  min_box_side: 32
+  canonical_orientation: true
+seed: 0
+cpu_threads: 2
+checkpoint_every: 500
+ahd:
+  beta_start: 0.0001
+  beta_end: 0.01
+  max_steps: 500
+  initial_steps: 1.0
+  target: 0.6
+  gain: 1.0
+  interval: 4

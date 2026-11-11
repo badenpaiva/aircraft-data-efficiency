@@ -165,6 +165,111 @@ class Discriminator(nn.Module):
         return torch.cat([head(top[int(r)]).flatten(1) for r,head in self.heads.items()], dim=1)
 
 
+def diff_augment(x, policy):
+    """DiffAugment (Zhao et al., 2020), as Projected-GAN uses it: the same random, differentiable
+    changes on real and fake images, so the discriminator cannot fix on exact textures and the
+    generator is not pushed towards the changes themselves. Images in [-1, 1]."""
+    n = x.shape[0]
+    if 'color' in policy:
+        x = x + (torch.rand(n,1,1,1, device=x.device)-0.5)
+        mean = x.mean(1, keepdim=True)
+        x = (x-mean)*torch.rand(n,1,1,1, device=x.device)*2 + mean
+        mean = x.mean((1,2,3), keepdim=True)
+        x = (x-mean)*(torch.rand(n,1,1,1, device=x.device)+0.5) + mean
+    if 'translation' in policy:
+        h, w = x.shape[-2:]
+        shift = torch.randint(-(h//8), h//8+1, (n,2), device=x.device)
+        ys = (torch.arange(h, device=x.device)[None]+shift[:,:1]).clamp(0, h-1)
+        xs = (torch.arange(w, device=x.device)[None]+shift[:,1:]).clamp(0, w-1)
+        # Edge pixels repeat rather than wrap; zero padding would add a border the real crops lack.
+        x = x[torch.arange(n, device=x.device)[:,None,None], :, ys[:,:,None], xs[:,None,:]].permute(0,3,1,2)
+    if 'cutout' in policy:
+        h, w = x.shape[-2:]
+        ch, cw = h//2, w//2
+        cy = torch.randint(0, h-ch+1, (n,1,1), device=x.device)
+        cx = torch.randint(0, w-cw+1, (n,1,1), device=x.device)
+        rows = torch.arange(h, device=x.device)[None,:,None]
+        cols = torch.arange(w, device=x.device)[None,None,:]
+        keep = ~((rows >= cy) & (rows < cy+ch) & (cols >= cx) & (cols < cx+cw))
+        x = x*keep[:,None].to(x.dtype)
+    return x
+
+
+class ProjectedDiscriminator(nn.Module):
+    """Projected-GAN discriminator, the paper's baseline: frozen pretrained features, fixed random
+    cross-channel and cross-scale mixing, and trained heads (HFFB at 16/8px) giving 64 logits.
+
+    The feature network is ImageNet EfficientNet-B0 (torchvision), the nearest available weights to
+    Projected-GAN's EfficientNet-lite0. Only the heads train, so the discriminator cannot learn
+    features that memorise a few hundred patches. AHD noise stays on the input image, as in
+    Discriminator.
+    """
+    TAPS = {64:(2, 24), 32:(3, 40), 16:(5, 112), 8:(7, 320)}  # pyramid size: (stage index, channels) at 256px
+    MIXED = {64:64, 32:128, 16:256, 8:512}  # Projected-GAN's mixed channel widths
+
+    def __init__(self, ahd=None, pretrained=True, augment=()):
+        super().__init__()
+        unknown = set(augment) - {'color', 'translation', 'cutout'}
+        if unknown:
+            raise ValueError(f'Unknown DiffAugment policy: {sorted(unknown)}')
+        self.augment = tuple(augment)
+        from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
+        weights = EfficientNet_B0_Weights.IMAGENET1K_V1 if pretrained else None
+        self.backbone = efficientnet_b0(weights=weights).features[:8]
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1,3,1,1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1,3,1,1))
+        self.ccm = nn.ModuleDict({str(r):nn.Conv2d(c, self.MIXED[r], 1) for r,(_, c) in self.TAPS.items()})
+        self.csm = nn.ModuleDict({str(r):nn.Conv2d(self.MIXED[r//2], self.MIXED[r], 1) for r in (16,32,64)})
+        sn = nn.utils.spectral_norm
+        self.heads = nn.ModuleDict()
+        for start, c in self.MIXED.items():
+            layers, r = [], start
+            while r > 4:
+                block = Down(c, c, frequency=r in (16,8))
+                block.spatial = sn(block.spatial)
+                if block.frequency is not None:
+                    block.frequency = sn(block.frequency)
+                layers.append(block)
+                r //= 2
+            layers.append(nn.Conv2d(c, 1, 1))
+            self.heads[str(start)] = nn.Sequential(*layers)
+        self.ahd = AHD(**(ahd or {}))
+        self.requires_grad_(True)
+        self.train()
+
+    def frozen(self):
+        return (self.backbone, self.ccm, self.csm)
+
+    def requires_grad_(self, requires_grad=True):
+        super().requires_grad_(requires_grad)
+        for part in self.frozen():
+            part.requires_grad_(False)
+        return self
+
+    def train(self, mode=True):
+        super().train(mode)
+        self.backbone.eval()  # pretrained BatchNorm statistics stay fixed
+        return self
+
+    def forward(self, images, diffuse=True):
+        if self.augment and self.training:
+            images = diff_augment(images, self.augment)
+        if diffuse:
+            images = self.ahd(images)
+        x = F.interpolate((images+1)/2, size=(256,256), mode='bilinear', align_corners=False)
+        x = (x-self.mean)/self.std
+        features = {}
+        for i, stage in enumerate(self.backbone):
+            x = stage(x)
+            for r, (tap, _) in self.TAPS.items():
+                if i == tap:
+                    features[r] = self.ccm[str(r)](x)
+        top = {8:features[8]}
+        for r in (16,32,64):
+            top[r] = features[r] + F.interpolate(self.csm[str(r)](top[r//2]), size=(r,r), mode='bilinear', align_corners=False)
+        return torch.cat([self.heads[str(r)](top[r]).flatten(1) for r in (64,32,16,8)], dim=1)
+
+
 def discriminator_loss(real, fake):
     return F.softplus(-real).mean()+F.softplus(fake).mean()
 

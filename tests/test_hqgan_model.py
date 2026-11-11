@@ -6,7 +6,8 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
 
 from augmentation.hqgan.model import (haar, inverse_haar, HSC, AHD, Generator,
-                                      Discriminator, discriminator_loss, generator_loss)
+                                      Discriminator, ProjectedDiscriminator, diff_augment,
+                                      discriminator_loss, generator_loss)
 
 
 class HQGANModelTests(unittest.TestCase):
@@ -70,6 +71,34 @@ class HQGANModelTests(unittest.TestCase):
         self.assertLess(float((d.ahd(x)-x).abs().max()), 0.1)
         d.ahd.horizon.fill_(500.0)
         self.assertGreater(float((d.ahd(x)-x).std()), 0.4)
+
+    def test_projected_discriminator_trains_only_its_heads(self):
+        d = ProjectedDiscriminator(pretrained=False)
+        frozen = [p.clone() for p in d.backbone.parameters()]
+        stats = d.backbone[1][0].block[0][1].running_mean.clone()
+        d.requires_grad_(True)  # the training loop calls this every step
+        self.assertFalse(any(p.requires_grad for part in d.frozen() for p in part.parameters()))
+        self.assertFalse(d.backbone.training)
+        optimizer = torch.optim.Adam(d.parameters(), lr=0.1)
+        heads = [p.clone() for p in d.heads.parameters()]
+        logits = d(torch.rand(2,3,64,64)*2-1)
+        self.assertEqual(logits.shape, (2,64))
+        logits.mean().backward(); optimizer.step()
+        self.assertTrue(all(torch.equal(a, b) for a, b in zip(frozen, d.backbone.parameters())))
+        torch.testing.assert_close(d.backbone[1][0].block[0][1].running_mean, stats)
+        self.assertTrue(any(not torch.equal(a, b) for a, b in zip(heads, d.heads.parameters())))
+
+    def test_diff_augment_keeps_shape_and_gradient(self):
+        x = (torch.rand(4,3,64,64)*2-1).requires_grad_()
+        y = diff_augment(x, ('color','translation','cutout'))
+        self.assertEqual(y.shape, x.shape)
+        self.assertFalse(torch.allclose(y, x))
+        y.mean().backward()
+        self.assertGreater(float(x.grad.abs().sum()), 0)
+        d = ProjectedDiscriminator(pretrained=False, augment=('translation',)).eval()
+        torch.testing.assert_close(d(x, diffuse=False), d(x, diffuse=False))  # no augmentation at eval
+        with self.assertRaises(ValueError):
+            ProjectedDiscriminator(pretrained=False, augment=('flip',))
 
     def test_gan_update_changes_generator_and_discriminator(self):
         for resolution in (64,128):
